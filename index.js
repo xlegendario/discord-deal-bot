@@ -15,16 +15,15 @@ const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process
 const PORT = process.env.PORT || 3000;
 
 // ✅ Google Sheets setup
-console.log('GOOGLE_PRIVATE_KEY starts with:', process.env.GOOGLE_PRIVATE_KEY?.slice(0, 30));
+const parsedPrivateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+console.log("🔐 GOOGLE_PRIVATE_KEY preview:", parsedPrivateKey?.slice(0, 30));
 
 const auth = new google.auth.JWT(
   process.env.GOOGLE_CLIENT_EMAIL,
   null,
-  process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  parsedPrivateKey,
   ['https://www.googleapis.com/auth/spreadsheets']
 );
-
-
 
 const sheets = google.sheets({ version: 'v4', auth });
 
@@ -69,7 +68,8 @@ async function appendToSheet(data) {
     await sheets.spreadsheets.values.append(request);
     console.log(`✅ Added order ${data.orderNumber} to Google Sheet`);
   } catch (err) {
-    console.error(`❌ Failed to append to sheet for order ${data.orderNumber}:`, err);
+    console.error(`❌ Failed to append to sheet for order ${data.orderNumber}:`, err.response?.data || err);
+    throw err; // important for feedback below
   }
 }
 
@@ -184,9 +184,12 @@ client.on(Events.InteractionCreate, async interaction => {
     const payout = lines[3]?.split('**')[1]?.replace('€', '') || '';
     const orderNumber = channel.name.split('-')[1];
 
-    await appendToSheet({ productName, sku, payout, sellerId, orderNumber });
-
-    await interaction.reply({ content: '✅ Deal succesvol toegevoegd aan Google Sheets!', flags: 1 << 6 });
+    try {
+      await appendToSheet({ productName, sku, payout, sellerId, orderNumber });
+      await interaction.reply({ content: '✅ Deal succesvol toegevoegd aan Google Sheets!', flags: 1 << 6 });
+    } catch (err) {
+      await interaction.reply({ content: '❌ Mislukt om deal toe te voegen aan Google Sheets.', flags: 1 << 6 });
+    }
   }
 });
 
