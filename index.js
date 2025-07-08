@@ -20,6 +20,8 @@ client.once('ready', () => {
 app.post('/claim-deal', async (req, res) => {
   const { orderNumber, productName, sku, size, brand, payout, recordId } = req.body;
 
+console.log("Received POST /claim-deal with body:", req.body);
+
   if (!orderNumber || !productName || !sku || !size || !brand || !payout || !recordId) {
     return res.status(400).send("Missing required fields");
   }
