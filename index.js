@@ -26,6 +26,8 @@ const client = new Client({
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const PORT = process.env.PORT || 3000;
 
+const sellerMap = new Map(); // 🧠 Stores sellerId by channel ID
+
 client.once('ready', () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
 });
@@ -101,12 +103,13 @@ client.on(Events.InteractionCreate, async interaction => {
     let sellerId = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
     sellerId = `SE-${sellerId.padStart(5, '0')}`;
 
+    // 🔒 Store seller ID in memory linked to the channel ID
+    sellerMap.set(interaction.channel.id, sellerId);
+
     await interaction.reply({
       content: `✅ Seller ID ontvangen: **${sellerId}**\nUpload nu een foto van het paar.`,
       flags: 1 << 6
     });
-
-    interaction.channel.sellerData = { sellerId };
   }
 
   if (interaction.isButton() && interaction.customId === 'confirm_deal') {
@@ -114,7 +117,7 @@ client.on(Events.InteractionCreate, async interaction => {
     const messages = await channel.messages.fetch({ limit: 50 });
 
     const imageMsg = messages.find(m => m.attachments.size > 0);
-    const sellerId = channel.sellerData?.sellerId;
+    const sellerId = sellerMap.get(channel.id); // ✅ Retrieve from map
 
     if (!imageMsg || !sellerId) {
       return interaction.reply({ content: '❌ Afbeelding of Seller ID ontbreekt.', flags: 1 << 6 });
@@ -136,7 +139,6 @@ client.on(Events.InteractionCreate, async interaction => {
     const orderNumber = channel.name.split('-')[1];
 
     try {
-      // Lookup linked record ID for Seller
       const sellerRecords = await base('Sellers Database')
         .select({
           filterByFormula: `{Seller ID} = "${sellerId}"`,
@@ -161,7 +163,7 @@ client.on(Events.InteractionCreate, async interaction => {
         'Purchase Price': parseFloat(payout),
         'Shipping Deduction': 0,
         'Purchase Date': new Date().toISOString().split('T')[0], // format: YYYY-MM-DD
-        'Seller ID': [ { id: sellerRecordId } ],
+        'Seller ID': [{ id: sellerRecordId }],
         'Ticket Number': channel.name,
         'Type': 'Direct',
         'Verification Status': 'Verified',
@@ -178,7 +180,7 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
-// 🔔 When image is uploaded, show Confirm Deal button
+// 🔔 Show Confirm Deal button when image is posted
 client.on(Events.MessageCreate, async message => {
   if (message.channel.name.startsWith('deal-') && message.attachments.size > 0) {
     const row = new ActionRowBuilder().addComponents(
