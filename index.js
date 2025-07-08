@@ -15,12 +15,15 @@ const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process
 const PORT = process.env.PORT || 3000;
 
 // ✅ Google Sheets setup
+console.log('GOOGLE_PRIVATE_KEY starts with:', process.env.GOOGLE_PRIVATE_KEY?.slice(0, 30));
+
 const auth = new google.auth.JWT(
   process.env.GOOGLE_CLIENT_EMAIL,
   null,
-  process.env.GOOGLE_PRIVATE_KEY, // no replace
+  process.env.GOOGLE_PRIVATE_KEY,
   ['https://www.googleapis.com/auth/spreadsheets']
 );
+
 
 const sheets = google.sheets({ version: 'v4', auth });
 
