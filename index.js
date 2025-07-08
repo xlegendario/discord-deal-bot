@@ -31,11 +31,11 @@ async function appendToSheet(data) {
     insertDataOption: 'INSERT_ROWS',
     resource: {
       values: [[
-        data.productName,   // Model Name
-        data.sku,           // SKU
-        data.payout,        // Price
-        data.sellerId,      // Seller ID
-        data.orderNumber    // Ticket Number
+        data.productName,
+        data.sku,
+        data.payout,
+        data.sellerId,
+        data.orderNumber
       ]]
     }
   };
@@ -121,7 +121,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
     await interaction.reply({
       content: `✅ Seller ID ontvangen: **${sellerId}**\nUpload nu een foto van het paar.`,
-      ephemeral: true
+      flags: 1 << 6 // ephemeral response
     });
 
     const channel = interaction.channel;
@@ -133,31 +133,33 @@ client.on(Events.InteractionCreate, async interaction => {
     const messages = await channel.messages.fetch({ limit: 50 });
 
     const imageMsg = messages.find(msg => msg.attachments.size > 0);
-    const imageUrl = imageMsg?.attachments.first()?.url;
     const sellerId = channel.sellerData?.sellerId;
 
     if (!imageMsg || !sellerId) {
-      return interaction.reply({ content: '❌ Afbeelding of Seller ID ontbreekt.', ephemeral: true });
+      return interaction.reply({ content: '❌ Afbeelding of Seller ID ontbreekt.', flags: 1 << 6 });
     }
 
-    if (!interaction.message.embeds.length || !interaction.message.embeds[0].description) {
-      return interaction.reply({ content: '❌ Embed met dealinformatie ontbreekt.', ephemeral: true });
+    const dealMessage = messages.find(m => m.embeds.length > 0);
+    const embed = dealMessage?.embeds?.[0];
+
+    if (!embed || !embed.description) {
+      return interaction.reply({ content: '❌ Embed met dealinformatie ontbreekt.', flags: 1 << 6 });
     }
 
-    const [productLine, skuLine, payoutLine] = interaction.message.embeds[0].description.split('\n');
-    const productName = productLine.split('**')[1];
-    const sku = skuLine.split('**')[1];
-    const payout = payoutLine.split('**')[1];
+    const lines = embed.description.split('\n');
+    const productName = lines[1]?.split('**')[1] || '';
+    const sku = lines[2]?.split('**')[1] || '';
+    const payout = lines[3]?.split('**')[1]?.replace('€', '') || '';
 
     await appendToSheet({
-      orderNumber: channel.name.split('-')[1],
       productName,
       sku,
       payout,
-      sellerId
+      sellerId,
+      orderNumber: channel.name.split('-')[1]
     });
 
-    await interaction.reply({ content: '✅ Deal toegevoegd aan Google Sheets!', ephemeral: true });
+    await interaction.reply({ content: '✅ Deal succesvol toegevoegd aan Google Sheets!', flags: 1 << 6 });
   }
 });
 
@@ -175,7 +177,6 @@ client.on(Events.MessageCreate, async message => {
 });
 
 client.login(process.env.DISCORD_TOKEN);
-
 app.listen(PORT, () => {
   console.log(`🌐 Express server running on port ${PORT}`);
 });
