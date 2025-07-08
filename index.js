@@ -14,14 +14,13 @@ const client = new Client({
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const PORT = process.env.PORT || 3000;
 
-// ✅ Google Sheets auth
+// ✅ Google Sheets setup
 const auth = new google.auth.JWT(
   process.env.GOOGLE_CLIENT_EMAIL,
   null,
-  process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'), // escaped newlines fix
   ['https://www.googleapis.com/auth/spreadsheets']
 );
-
 const sheets = google.sheets({ version: 'v4', auth });
 
 async function authorizeGoogle() {
@@ -29,12 +28,13 @@ async function authorizeGoogle() {
     await auth.authorize();
     console.log("✅ Google Sheets authorized");
   } catch (err) {
-    console.error("❌ Google Sheets auth error:", err);
+    console.error("❌ Google auth error:", err);
   }
 }
-authorizeGoogle(); // Call on startup
+authorizeGoogle();
 
-
+// ✅ Google Sheets append function
+async function appendToSheet(data) {
   const row = [
     '',                   // Item ID
     data.productName,     // Model Name
@@ -67,8 +67,14 @@ authorizeGoogle(); // Call on startup
     }
   };
 
-  await sheets.spreadsheets.values.append(request);
+  try {
+    await sheets.spreadsheets.values.append(request);
+  } catch (err) {
+    console.error("❌ Failed to append to sheet:", err);
+  }
 }
+
+// ✅ Discord Bot Logic
 
 client.once('ready', () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
@@ -178,14 +184,9 @@ client.on(Events.InteractionCreate, async interaction => {
     const productName = lines[1]?.split('**')[1] || '';
     const sku = lines[2]?.split('**')[1] || '';
     const payout = lines[3]?.split('**')[1]?.replace('€', '') || '';
+    const orderNumber = channel.name.split('-')[1];
 
-    await appendToSheet({
-      productName,
-      sku,
-      payout,
-      sellerId,
-      orderNumber: channel.name.split('-')[1]
-    });
+    await appendToSheet({ productName, sku, payout, sellerId, orderNumber });
 
     await interaction.reply({ content: '✅ Deal succesvol toegevoegd aan Google Sheets!', flags: 1 << 6 });
   }
