@@ -163,7 +163,7 @@ client.on(Events.InteractionCreate, async interaction => {
         'Purchase Price': parseFloat(payout),
         'Shipping Deduction': 0,
         'Purchase Date': new Date().toISOString().split('T')[0], // format: YYYY-MM-DD
-        'Seller ID': [{ id: sellerRecordId }],
+        'Seller ID': [sellerRecordId],
         'Ticket Number': channel.name,
         'Type': 'Direct',
         'Verification Status': 'Verified',
