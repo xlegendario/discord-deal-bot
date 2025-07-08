@@ -102,8 +102,6 @@ client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
     let sellerId = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
     sellerId = `SE-${sellerId.padStart(5, '0')}`;
-
-    // 🔒 Store seller ID in memory linked to the channel ID
     sellerMap.set(interaction.channel.id, sellerId);
 
     await interaction.reply({
@@ -117,7 +115,7 @@ client.on(Events.InteractionCreate, async interaction => {
     const messages = await channel.messages.fetch({ limit: 50 });
 
     const imageMsg = messages.find(m => m.attachments.size > 0);
-    const sellerId = sellerMap.get(channel.id); // ✅ Retrieve from map
+    const sellerId = sellerMap.get(channel.id);
 
     if (!imageMsg || !sellerId) {
       return interaction.reply({ content: '❌ Afbeelding of Seller ID ontbreekt.', flags: 1 << 6 });
@@ -129,6 +127,9 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!embed || !embed.description) {
       return interaction.reply({ content: '❌ Embed met dealinformatie ontbreekt.', flags: 1 << 6 });
     }
+
+    // ✅ define `lines` to fix crash
+    const lines = embed.description.split('\n');
 
     const getValueFromLine = (label) =>
       lines.find(line => line.includes(label))?.split(`${label}`)[1]?.trim() || '';
@@ -164,7 +165,7 @@ client.on(Events.InteractionCreate, async interaction => {
         'Brand': brand,
         'Purchase Price': parseFloat(payout),
         'Shipping Deduction': 0,
-        'Purchase Date': new Date().toISOString().split('T')[0], // format: YYYY-MM-DD
+        'Purchase Date': new Date().toISOString().split('T')[0],
         'Seller ID': [sellerRecordId],
         'Ticket Number': channel.name,
         'Type': 'Direct',
@@ -182,7 +183,6 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
-// 🔔 Show Confirm Deal button when image is posted
 client.on(Events.MessageCreate, async message => {
   if (message.channel.name.startsWith('deal-') && message.attachments.size > 0) {
     const row = new ActionRowBuilder().addComponents(
