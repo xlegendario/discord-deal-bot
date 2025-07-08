@@ -22,12 +22,11 @@ const auth = new google.auth.JWT(
   ['https://www.googleapis.com/auth/spreadsheets']
 );
 
-await auth.authorize(); // 🔥 REQUIRED
-
 const sheets = google.sheets({ version: 'v4', auth });
 
-
 async function appendToSheet(data) {
+  await auth.authorize(); // make sure auth is ready
+
   const row = [
     '',                   // Item ID
     data.productName,     // Model Name
@@ -62,7 +61,6 @@ async function appendToSheet(data) {
 
   await sheets.spreadsheets.values.append(request);
 }
-
 
 client.once('ready', () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
@@ -143,7 +141,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
     await interaction.reply({
       content: `✅ Seller ID ontvangen: **${sellerId}**\nUpload nu een foto van het paar.`,
-      flags: 1 << 6 // ephemeral response
+      flags: 1 << 6 // ephemeral
     });
 
     const channel = interaction.channel;
