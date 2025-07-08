@@ -136,48 +136,49 @@ client.on(Events.InteractionCreate, async interaction => {
     const orderNumber = channel.name.split('-')[1];
 
     try {
-  // Find the Seller in Sellers Database where Seller ID = sellerId (e.g., "SE-00001")
-  const sellerRecords = await base('Sellers Database')
-    .select({
-      filterByFormula: `{Seller ID} = "${sellerId}"`,
-      maxRecords: 1
-    })
-    .firstPage();
+      // Lookup linked record ID for Seller
+      const sellerRecords = await base('Sellers Database')
+        .select({
+          filterByFormula: `{Seller ID} = "${sellerId}"`,
+          maxRecords: 1
+        })
+        .firstPage();
 
-  if (!sellerRecords.length) {
-    return interaction.reply({
-      content: `❌ Seller with ID "${sellerId}" not found in Airtable.`,
-      flags: 1 << 6
-    });
+      if (!sellerRecords.length) {
+        return interaction.reply({
+          content: `❌ Seller with ID "${sellerId}" not found in Airtable.`,
+          flags: 1 << 6
+        });
+      }
+
+      const sellerRecordId = sellerRecords[0].id;
+
+      await base('Inventory Units').create({
+        'Product Name': productName,
+        'SKU': sku,
+        'Size': size,
+        'Brand': brand,
+        'Purchase Price': parseFloat(payout),
+        'Shipping Deduction': 0,
+        'Purchase Date': new Date().toISOString().split('T')[0], // format: YYYY-MM-DD
+        'Seller ID': [ { id: sellerRecordId } ],
+        'Ticket Number': channel.name,
+        'Type': 'Direct',
+        'Verification Status': 'Verified',
+        'Payment Status': 'To Pay',
+        'Availability Status': 'Available',
+        'Margin %': '10%'
+      });
+
+      await interaction.reply({ content: '✅ Deal succesvol toegevoegd aan Airtable!', flags: 1 << 6 });
+    } catch (err) {
+      console.error("❌ Airtable add error:", err);
+      await interaction.reply({ content: '❌ Mislukt om deal toe te voegen aan Airtable.', flags: 1 << 6 });
+    }
   }
+});
 
-  const sellerRecordId = sellerRecords[0].id;
-
-  // Create new Inventory Units record
-  await base('Inventory Units').create({
-    'Product Name': productName,
-    'SKU': sku,
-    'Size': size,
-    'Brand': brand,
-    'Purchase Price': parseFloat(payout),
-    'Shipping Deduction': 0,
-    'Purchase Date': new Date().toISOString().split('T')[0], // Format: YYYY-MM-DD
-    'Seller ID': [{ id: sellerRecordId }],
-    'Ticket Number': channel.name,
-    'Type': 'Direct',
-    'Verification Status': 'Verified',
-    'Payment Status': 'To Pay',
-    'Availability Status': 'Available',
-    'Margin %': '10%'
-  });
-
-  await interaction.reply({ content: '✅ Deal succesvol toegevoegd aan Airtable!', flags: 1 << 6 });
-} catch (err) {
-  console.error("❌ Airtable add error:", err);
-  await interaction.reply({ content: '❌ Mislukt om deal toe te voegen aan Airtable.', flags: 1 << 6 });
-}
-
-
+// 🔔 When image is uploaded, show Confirm Deal button
 client.on(Events.MessageCreate, async message => {
   if (message.channel.name.startsWith('deal-') && message.attachments.size > 0) {
     const row = new ActionRowBuilder().addComponents(
