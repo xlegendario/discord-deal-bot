@@ -11,8 +11,8 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
+// Airtable setup
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
-const PORT = process.env.PORT || 3000;
 
 // Google Sheets setup
 const auth = new google.auth.JWT(
@@ -23,26 +23,28 @@ const auth = new google.auth.JWT(
 );
 const sheets = google.sheets({ version: 'v4', auth });
 
+// Append to Google Sheet
 async function appendToSheet(data) {
-  const request = {
+  await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
     range: 'Sheet1!A1',
     valueInputOption: 'USER_ENTERED',
     insertDataOption: 'INSERT_ROWS',
     resource: {
       values: [[
-        data.orderNumber,
-        data.productName,
-        data.sku,
-        data.payout,
-        data.sellerId,
-        data.imageUrl,
+        data.productName,  // Model Name
+        data.sku,          // SKU
+        data.payout,       // Price
+        data.sellerId,     // Seller ID
+        data.orderNumber,  // Ticket Number
+        data.imageUrl,     // Image URL
         new Date().toLocaleString()
       ]]
     }
-  };
-  await sheets.spreadsheets.values.append(request);
+  });
 }
+
+const PORT = process.env.PORT || 3000;
 
 client.once('ready', () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
@@ -93,12 +95,14 @@ app.post('/claim-deal', async (req, res) => {
     });
 
     res.redirect(302, `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`);
-
   } catch (err) {
     console.error("❌ Error during claim:", err);
     res.status(500).send("Internal Server Error");
   }
 });
+
+// Store temp state
+const sellerStates = new Map();
 
 client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isButton() && interaction.customId === 'start_claim') {
@@ -120,14 +124,13 @@ client.on(Events.InteractionCreate, async interaction => {
 
   if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
     const sellerId = interaction.fields.getTextInputValue('seller_id');
+    const channelId = interaction.channel.id;
+    sellerStates.set(channelId, { sellerId });
 
     await interaction.reply({
       content: `✅ Seller ID ontvangen: **${sellerId}**\nUpload nu een foto van het paar.`,
       ephemeral: true
     });
-
-    const channel = interaction.channel;
-    channel.sellerData = { sellerId };
   }
 
   if (interaction.isButton() && interaction.customId === 'confirm_deal') {
@@ -136,9 +139,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
     const imageMsg = messages.find(msg => msg.attachments.size > 0);
     const imageUrl = imageMsg?.attachments.first()?.url;
-    const sellerId = channel.sellerData?.sellerId;
+    const sellerData = sellerStates.get(channel.id);
 
-    if (!imageUrl || !sellerId) {
+    if (!imageUrl || !sellerData?.sellerId) {
       return interaction.reply({ content: '❌ Afbeelding of Seller ID ontbreekt.', ephemeral: true });
     }
 
@@ -152,11 +155,12 @@ client.on(Events.InteractionCreate, async interaction => {
       productName,
       sku,
       payout,
-      sellerId,
+      sellerId: sellerData.sellerId,
       imageUrl
     });
 
     await interaction.reply({ content: '✅ Deal toegevoegd aan Google Sheets!', ephemeral: true });
+    sellerStates.delete(channel.id);
   }
 });
 
