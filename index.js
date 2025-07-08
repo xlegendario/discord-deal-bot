@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 3000;
 const auth = new google.auth.JWT(
   process.env.GOOGLE_CLIENT_EMAIL,
   null,
-  process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'), // escaped newlines fix
+  process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
   ['https://www.googleapis.com/auth/spreadsheets']
 );
 const sheets = google.sheets({ version: 'v4', auth });
@@ -33,7 +33,7 @@ async function authorizeGoogle() {
 }
 authorizeGoogle();
 
-// ✅ Google Sheets append function
+// ✅ Append to Google Sheet
 async function appendToSheet(data) {
   const row = [
     '',                   // Item ID
@@ -49,12 +49,7 @@ async function appendToSheet(data) {
     '',                   // Discord
     '',                   // Email
     data.orderNumber,     // Ticket Number
-    '',                   // Type
-    '',                   // Status
-    '',                   // Item Condition
-    '',                   // Item Note
-    '',                   // Margin
-    ''                    // Sales Price
+    '', '', '', '', '', '' // Unused columns
   ];
 
   const request = {
@@ -62,19 +57,18 @@ async function appendToSheet(data) {
     range: 'Sheet1!A1',
     valueInputOption: 'USER_ENTERED',
     insertDataOption: 'INSERT_ROWS',
-    resource: {
-      values: [row]
-    }
+    resource: { values: [row] }
   };
 
   try {
     await sheets.spreadsheets.values.append(request);
+    console.log(`✅ Added order ${data.orderNumber} to Google Sheet`);
   } catch (err) {
-    console.error("❌ Failed to append to sheet:", err);
+    console.error(`❌ Failed to append to sheet for order ${data.orderNumber}:`, err);
   }
 }
 
-// ✅ Discord Bot Logic
+// ✅ Discord Bot
 
 client.once('ready', () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
@@ -95,16 +89,17 @@ app.post('/claim-deal', async (req, res) => {
       name: `deal-${orderNumber}`,
       type: ChannelType.GuildText,
       parent: category.id,
-      permissionOverwrites: [
-        {
-          id: guild.roles.everyone,
-          deny: [PermissionsBitField.Flags.ViewChannel]
-        }
-      ]
+      permissionOverwrites: [{
+        id: guild.roles.everyone,
+        deny: [PermissionsBitField.Flags.ViewChannel]
+      }]
     });
+
+    console.log(`✅ Created channel: ${channel.name}`);
 
     const invite = await channel.createInvite({ maxUses: 1, unique: true });
     const inviteUrl = invite.url;
+    console.log(`✅ Invite created: ${inviteUrl}`);
 
     const embed = new EmbedBuilder()
       .setTitle("💸 Deal Claim")
@@ -127,26 +122,25 @@ app.post('/claim-deal', async (req, res) => {
     res.redirect(302, `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`);
 
   } catch (err) {
-    console.error("❌ Error during claim:", err);
+    console.error("❌ Error during claim creation:", err);
     res.status(500).send("Internal Server Error");
   }
 });
 
+// Interactions
 client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isButton() && interaction.customId === 'start_claim') {
     const modal = new ModalBuilder()
       .setCustomId('seller_id_modal')
       .setTitle('Voer je Seller ID in');
 
-    const sellerInput = new TextInputBuilder()
+    const input = new TextInputBuilder()
       .setCustomId('seller_id')
       .setLabel("Seller ID")
       .setStyle(TextInputStyle.Short)
       .setRequired(true);
 
-    const row = new ActionRowBuilder().addComponents(sellerInput);
-    modal.addComponents(row);
-
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
     await interaction.showModal(modal);
   }
 
@@ -155,26 +149,25 @@ client.on(Events.InteractionCreate, async interaction => {
 
     await interaction.reply({
       content: `✅ Seller ID ontvangen: **${sellerId}**\nUpload nu een foto van het paar.`,
-      flags: 1 << 6 // ephemeral
+      flags: 1 << 6
     });
 
-    const channel = interaction.channel;
-    channel.sellerData = { sellerId };
+    interaction.channel.sellerData = { sellerId };
   }
 
   if (interaction.isButton() && interaction.customId === 'confirm_deal') {
     const channel = interaction.channel;
     const messages = await channel.messages.fetch({ limit: 50 });
 
-    const imageMsg = messages.find(msg => msg.attachments.size > 0);
+    const imageMsg = messages.find(m => m.attachments.size > 0);
     const sellerId = channel.sellerData?.sellerId;
 
     if (!imageMsg || !sellerId) {
       return interaction.reply({ content: '❌ Afbeelding of Seller ID ontbreekt.', flags: 1 << 6 });
     }
 
-    const dealMessage = messages.find(m => m.embeds.length > 0);
-    const embed = dealMessage?.embeds?.[0];
+    const dealMsg = messages.find(m => m.embeds.length > 0);
+    const embed = dealMsg?.embeds?.[0];
 
     if (!embed || !embed.description) {
       return interaction.reply({ content: '❌ Embed met dealinformatie ontbreekt.', flags: 1 << 6 });
@@ -192,6 +185,7 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
+// On image message
 client.on(Events.MessageCreate, async message => {
   if (message.channel.name.startsWith('deal-') && message.attachments.size > 0) {
     const row = new ActionRowBuilder().addComponents(
