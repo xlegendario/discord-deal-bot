@@ -59,14 +59,14 @@ app.post('/claim-deal', async (req, res) => {
     const invite = await channel.createInvite({ maxUses: 1, unique: true });
 
     const embed = new EmbedBuilder()
-      .setTitle("💸 Deal Claim")
-      .setDescription(`Welkom bij je deal!\n\n**Product:** ${productName}\n**SKU:** ${normalizedSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout}`)
+      .setTitle("💸 Deal Claimed")
+      .setDescription(`Check out your deal below:\n\n**Product:** ${productName}\n**SKU:** ${normalizedSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout}`)
       .setColor(0x00AE86);
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('start_claim')
-        .setLabel('Start Claim')
+        .setLabel('Process Claim')
         .setStyle(ButtonStyle.Primary)
     );
 
@@ -87,11 +87,11 @@ client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isButton() && interaction.customId === 'start_claim') {
     const modal = new ModalBuilder()
       .setCustomId('seller_id_modal')
-      .setTitle('Voer je Seller ID in');
+      .setTitle('Please fill in your Seller ID');
 
     const input = new TextInputBuilder()
       .setCustomId('seller_id')
-      .setLabel("Seller ID (nummeriek, bijv. 00001)")
+      .setLabel("Seller ID (numerical, e.g. 00001)")
       .setStyle(TextInputStyle.Short)
       .setRequired(true);
 
@@ -105,7 +105,7 @@ client.on(Events.InteractionCreate, async interaction => {
     sellerMap.set(interaction.channel.id, sellerId);
 
     await interaction.reply({
-      content: `✅ Seller ID ontvangen: **${sellerId}**\nUpload nu een foto van het paar.`,
+      content: `✅ Seller ID received: **${sellerId}**\nPlease upload a picture of the pair to prove it's in-hand.`,
       flags: 1 << 6
     });
   }
@@ -116,7 +116,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
     const sellerId = sellerMap.get(channel.id);
     if (!sellerId) {
-      return interaction.reply({ content: '❌ Seller ID ontbreekt.', flags: 1 << 6 });
+      return interaction.reply({ content: '❌ Seller ID is missing.', flags: 1 << 6 });
     }
 
     const imageMsg = messages.find(m =>
@@ -124,14 +124,14 @@ client.on(Events.InteractionCreate, async interaction => {
     );
 
     if (!imageMsg) {
-      return interaction.reply({ content: '❌ Afbeelding ontbreekt.', flags: 1 << 6 });
+      return interaction.reply({ content: '❌ Picture is missing.', flags: 1 << 6 });
     }
 
     const dealMsg = messages.find(m => m.embeds.length > 0);
     const embed = dealMsg?.embeds?.[0];
 
     if (!embed || !embed.description) {
-      return interaction.reply({ content: '❌ Embed met dealinformatie ontbreekt.', flags: 1 << 6 });
+      return interaction.reply({ content: '❌ Embed with deal information is missing.', flags: 1 << 6 });
     }
 
     const lines = embed.description.split('\n');
@@ -179,10 +179,10 @@ client.on(Events.InteractionCreate, async interaction => {
         'Margin %': '10%'
       });
 
-      await interaction.reply({ content: '✅ Deal succesvol toegevoegd aan Airtable!', flags: 1 << 6 });
+      await interaction.reply({ content: '✅ Deal successfully added to Airtable!', flags: 1 << 6 });
     } catch (err) {
       console.error("❌ Airtable add error:", err);
-      await interaction.reply({ content: '❌ Mislukt om deal toe te voegen aan Airtable.', flags: 1 << 6 });
+      await interaction.reply({ content: '❌ Failed to add deal to Airtable.', flags: 1 << 6 });
     }
   }
 });
@@ -196,7 +196,7 @@ client.on(Events.MessageCreate, async message => {
         .setStyle(ButtonStyle.Success)
     );
 
-    await message.channel.send({ content: 'Admin: klik op de knop om de deal te bevestigen.', components: [row] });
+    await message.channel.send({ content: 'Admin: click to confirm the deal.', components: [row] });
   }
 });
 
