@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const { Client, GatewayIntentBits, ChannelType, EmbedBuilder, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events } = require('discord.js');
+const { Client, GatewayIntentBits, ChannelType, EmbedBuilder, PermissionsBitField, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events } = require('discord.js');
 const { google } = require('googleapis');
 const Airtable = require('airtable');
 
@@ -18,7 +18,7 @@ const PORT = process.env.PORT || 3000;
 const auth = new google.auth.JWT(
   process.env.GOOGLE_CLIENT_EMAIL,
   null,
-  process.env.GOOGLE_PRIVATE_KEY.replace(/\n/g, '\n'),
+  process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
   ['https://www.googleapis.com/auth/spreadsheets']
 );
 const sheets = google.sheets({ version: 'v4', auth });
@@ -51,10 +51,7 @@ client.once('ready', () => {
 app.post('/claim-deal', async (req, res) => {
   const { orderNumber, productName, sku, payout, recordId } = req.body;
 
-  console.log('📥 Incoming request body:', req.body);
-
   if (!orderNumber || !productName || !sku || !payout || !recordId) {
-    console.warn('⚠️ Missing fields:', { orderNumber, productName, sku, payout, recordId });
     return res.status(400).send("Missing required fields");
   }
 
@@ -76,31 +73,26 @@ app.post('/claim-deal', async (req, res) => {
 
     const invite = await channel.createInvite({ maxUses: 1, unique: true });
     const inviteUrl = invite.url;
-    console.log(`🔗 Created invite: ${inviteUrl}`);
 
     const embed = new EmbedBuilder()
       .setTitle("💸 Deal Claim")
-      .setDescription(`Welkom bij je deal!\n\n**Product:** ${productName}\n**SKU:** ${sku}\n**Payout:** €${payout}\n\nVoer hieronder je Seller ID in om te starten.`)
+      .setDescription(`Welkom bij je deal!\n\n**Product:** ${productName}\n**SKU:** ${sku}\n**Payout:** €${payout}`)
       .setColor(0x00AE86);
 
-    const confirmBtn = new ActionRowBuilder().addComponents(
+    const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId('confirm_deal')
-        .setLabel('Confirm Deal')
-        .setStyle(ButtonStyle.Success)
+        .setCustomId('start_claim')
+        .setLabel('Start Claim')
+        .setStyle(ButtonStyle.Primary)
     );
 
-    await channel.send({ embeds: [embed] });
-    await channel.send({ content: 'Admin: klik op de knop hieronder om de deal te bevestigen.', components: [confirmBtn] });
+    await channel.send({ embeds: [embed], components: [row] });
 
     await base('Unfulfilled Orders Log').update(recordId, {
       "Deal Invitation URL": inviteUrl
     });
 
-    console.log("✅ Airtable updated successfully");
-
-    const redirectUrl = `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`;
-    res.redirect(302, redirectUrl);
+    res.redirect(302, `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`);
 
   } catch (err) {
     console.error("❌ Error during claim:", err);
@@ -109,36 +101,79 @@ app.post('/claim-deal', async (req, res) => {
 });
 
 client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isButton()) return;
+  if (interaction.isButton() && interaction.customId === 'start_claim') {
+    const modal = new ModalBuilder()
+      .setCustomId('seller_id_modal')
+      .setTitle('Voer je Seller ID in');
 
-  if (interaction.customId === 'confirm_deal') {
-    const messages = await interaction.channel.messages.fetch({ limit: 20 });
-    const sellerIdMsg = messages.find(m => !m.author.bot && m.content);
-    const imageMsg = messages.find(m => m.attachments.size > 0);
+    const sellerInput = new TextInputBuilder()
+      .setCustomId('seller_id')
+      .setLabel("Seller ID")
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
 
-    if (!sellerIdMsg || !imageMsg) {
-      await interaction.reply({ content: '❌ Seller ID of afbeelding ontbreekt.', ephemeral: true });
-      return;
-    }
+    const row = new ActionRowBuilder().addComponents(sellerInput);
+    modal.addComponents(row);
 
-    const [_, productLine] = interaction.message.embeds[0].description.split('\n');
-    const productName = productLine.split('**')[1];
+    await interaction.showModal(modal);
+  }
 
-    await appendToSheet({
-      orderNumber: interaction.channel.name.split('-')[1],
-      productName,
-      sku: 'unknown',
-      payout: 'unknown',
-      sellerId: sellerIdMsg.content,
-      imageUrl: imageMsg.attachments.first().url
+  if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
+    const sellerId = interaction.fields.getTextInputValue('seller_id');
+
+    await interaction.reply({
+      content: `✅ Seller ID ontvangen: **${sellerId}**\nUpload nu een foto van het paar.`,
+      ephemeral: true
     });
 
-    await interaction.reply({ content: '✅ Deal bevestigd en toegevoegd aan Google Sheet!', ephemeral: true });
+    const channel = interaction.channel;
+    channel.sellerData = { sellerId };
+  }
+
+  if (interaction.isButton() && interaction.customId === 'confirm_deal') {
+    const channel = interaction.channel;
+    const messages = await channel.messages.fetch({ limit: 50 });
+
+    const imageMsg = messages.find(msg => msg.attachments.size > 0);
+    const imageUrl = imageMsg?.attachments.first()?.url;
+    const sellerId = channel.sellerData?.sellerId;
+
+    if (!imageUrl || !sellerId) {
+      return interaction.reply({ content: '❌ Afbeelding of Seller ID ontbreekt.', ephemeral: true });
+    }
+
+    const [productLine, skuLine, payoutLine] = interaction.message.embeds[0].description.split('\n');
+    const productName = productLine.split('**')[1];
+    const sku = skuLine.split('**')[1];
+    const payout = payoutLine.split('**')[1];
+
+    await appendToSheet({
+      orderNumber: channel.name.split('-')[1],
+      productName,
+      sku,
+      payout,
+      sellerId,
+      imageUrl
+    });
+
+    await interaction.reply({ content: '✅ Deal toegevoegd aan Google Sheets!', ephemeral: true });
+  }
+});
+
+client.on(Events.MessageCreate, async message => {
+  if (message.channel.name.startsWith('deal-') && message.attachments.size > 0) {
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('confirm_deal')
+        .setLabel('Confirm Deal')
+        .setStyle(ButtonStyle.Success)
+    );
+
+    await message.channel.send({ content: 'Admin: klik op de knop om de deal te bevestigen.', components: [row] });
   }
 });
 
 client.login(process.env.DISCORD_TOKEN);
-
 app.listen(PORT, () => {
   console.log(`🌐 Express server running on port ${PORT}`);
 });
