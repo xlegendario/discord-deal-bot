@@ -143,15 +143,14 @@ client.on(Events.InteractionCreate, async interaction => {
         'Brand': brand,
         'Purchase Price': Number(payout),
         'Shipping Deduction': 0,
-        'Purchase Date': new Date(),
+        'Purchase Date': new Date().toISOString().split('T')[0], // ISO date: YYYY-MM-DD
         'Seller ID': sellerId,
         'Ticket Number': channel.name,
         'Type': 'Direct',
         'Verification Status': 'Verified',
         'Payment Status': 'To Pay',
         'Availability Status': 'Available',
-        'Margin %': '10%',
-        'Image URL': imageMsg.attachments.first().url
+        'Margin %': '10%'
       });
 
       await interaction.reply({ content: '✅ Deal succesvol toegevoegd aan Airtable!', flags: 1 << 6 });
