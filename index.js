@@ -1,6 +1,19 @@
 require('dotenv').config();
 const express = require('express');
-const { Client, GatewayIntentBits, ChannelType, EmbedBuilder, PermissionsBitField, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events } = require('discord.js');
+const {
+  Client,
+  GatewayIntentBits,
+  ChannelType,
+  EmbedBuilder,
+  PermissionsBitField,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  Events
+} = require('discord.js');
 const Airtable = require('airtable');
 
 const app = express();
@@ -19,10 +32,11 @@ client.once('ready', () => {
 
 app.post('/claim-deal', async (req, res) => {
   const { orderNumber, productName, sku, size, brand, payout, recordId } = req.body;
+  console.log("Received POST /claim-deal with body:", req.body);
 
-console.log("Received POST /claim-deal with body:", req.body);
+  const normalizedSku = Array.isArray(sku) ? sku[0] : sku;
 
-  if (!orderNumber || !productName || !sku || !size || !brand || !payout || !recordId) {
+  if (!orderNumber || !productName || !normalizedSku || !size || !brand || !payout || !recordId) {
     return res.status(400).send("Missing required fields");
   }
 
@@ -44,11 +58,7 @@ console.log("Received POST /claim-deal with body:", req.body);
 
     const embed = new EmbedBuilder()
       .setTitle("💸 Deal Claim")
-      .setDescription(`Welkom bij je deal!
-\n**Product:** ${productName}
-**SKU:** ${sku}
-**Size:** ${size}
-**Payout:** €${payout}`)
+      .setDescription(`Welkom bij je deal!\n\n**Product:** ${productName}\n**SKU:** ${normalizedSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout}`)
       .setColor(0x00AE86);
 
     const row = new ActionRowBuilder().addComponents(
@@ -65,7 +75,6 @@ console.log("Received POST /claim-deal with body:", req.body);
     });
 
     res.redirect(302, `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`);
-
   } catch (err) {
     console.error("❌ Error during claim creation:", err);
     res.status(500).send("Internal Server Error");
@@ -122,7 +131,8 @@ client.on(Events.InteractionCreate, async interaction => {
     const productName = lines[1]?.split('**')[1] || '';
     const sku = lines[2]?.split('**')[1] || '';
     const size = lines[3]?.split('**')[1] || '';
-    const payout = lines[4]?.split('**')[1]?.replace('€', '') || '';
+    const brand = lines[4]?.split('**')[1] || '';
+    const payout = lines[5]?.split('**')[1]?.replace('€', '') || '';
     const orderNumber = channel.name.split('-')[1];
 
     try {
@@ -130,7 +140,7 @@ client.on(Events.InteractionCreate, async interaction => {
         'Product Name': productName,
         'SKU': sku,
         'Size': size,
-        'Brand': '',
+        'Brand': brand,
         'Purchase Price': payout,
         'Shipping Deduction': 0,
         'Purchase Date': new Date().toISOString(),
