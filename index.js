@@ -114,15 +114,7 @@ client.on(Events.InteractionCreate, async interaction => {
     const channel = interaction.channel;
     const messages = await channel.messages.fetch({ limit: 50 });
 
-    const imageMsg = messages.find(m => m.attachments.size > 0);
     const sellerId = sellerMap.get(channel.id);
-
-    if (!imageMsg || !sellerId) {
-      return interaction.reply({ content: '❌ Afbeelding of Seller ID ontbreekt.', flags: 1 << 6 });
-    }
-
-    const sellerId = sellerMap.get(channel.id);
-
     if (!sellerId) {
       return interaction.reply({ content: '❌ Seller ID ontbreekt.', flags: 1 << 6 });
     }
@@ -135,10 +127,14 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply({ content: '❌ Afbeelding ontbreekt.', flags: 1 << 6 });
     }
 
+    const dealMsg = messages.find(m => m.embeds.length > 0);
+    const embed = dealMsg?.embeds?.[0];
 
-    // ✅ define `lines` to fix crash
+    if (!embed || !embed.description) {
+      return interaction.reply({ content: '❌ Embed met dealinformatie ontbreekt.', flags: 1 << 6 });
+    }
+
     const lines = embed.description.split('\n');
-
     const getValueFromLine = (label) =>
       lines.find(line => line.includes(label))?.split(`${label}`)[1]?.trim() || '';
 
