@@ -14,7 +14,7 @@ const client = new Client({
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const PORT = process.env.PORT || 3000;
 
-// Google Sheets setup
+// ✅ Google Sheets auth
 const auth = new google.auth.JWT(
   process.env.GOOGLE_CLIENT_EMAIL,
   null,
@@ -24,8 +24,16 @@ const auth = new google.auth.JWT(
 
 const sheets = google.sheets({ version: 'v4', auth });
 
-async function appendToSheet(data) {
-  await auth.authorize(); // make sure auth is ready
+async function authorizeGoogle() {
+  try {
+    await auth.authorize();
+    console.log("✅ Google Sheets authorized");
+  } catch (err) {
+    console.error("❌ Google Sheets auth error:", err);
+  }
+}
+authorizeGoogle(); // Call on startup
+
 
   const row = [
     '',                   // Item ID
