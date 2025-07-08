@@ -130,12 +130,14 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply({ content: '❌ Embed met dealinformatie ontbreekt.', flags: 1 << 6 });
     }
 
-    const lines = embed.description.split('\n');
-    const productName = lines[1]?.split('**')[1] || '';
-    const sku = lines[2]?.split('**')[1] || '';
-    const size = lines[3]?.split('**')[1] || '';
-    const brand = lines[4]?.split('**')[1] || '';
-    const payout = lines[5]?.split('**')[1]?.replace('€', '') || '';
+    const getValueFromLine = (label) =>
+      lines.find(line => line.includes(label))?.split(`${label}`)[1]?.trim() || '';
+
+    const productName = getValueFromLine('**Product:**');
+    const sku = getValueFromLine('**SKU:**');
+    const size = getValueFromLine('**Size:**');
+    const brand = getValueFromLine('**Brand:**');
+    const payout = getValueFromLine('**Payout:**')?.replace('€', '');
     const orderNumber = channel.name.split('-')[1];
 
     try {
