@@ -37,7 +37,6 @@ async function appendToSheet(data) {
         data.payout,       // Price
         data.sellerId,     // Seller ID
         data.orderNumber,  // Ticket Number
-        data.imageUrl,     // Image URL
         new Date().toLocaleString()
       ]]
     }
