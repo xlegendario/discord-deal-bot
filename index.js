@@ -21,7 +21,11 @@ const auth = new google.auth.JWT(
   process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
   ['https://www.googleapis.com/auth/spreadsheets']
 );
+
+await auth.authorize(); // 🔥 REQUIRED
+
 const sheets = google.sheets({ version: 'v4', auth });
+
 
 async function appendToSheet(data) {
   const row = [
