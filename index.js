@@ -24,23 +24,41 @@ const auth = new google.auth.JWT(
 const sheets = google.sheets({ version: 'v4', auth });
 
 async function appendToSheet(data) {
+  const row = [
+    '',                   // Item ID
+    data.productName,     // Model Name
+    data.sku,             // SKU
+    '',                   // Size
+    '',                   // Brand
+    data.payout,          // Price
+    '',                   // Shipping Deduction
+    '',                   // Final Price
+    '',                   // Total Deal Price
+    data.sellerId,        // Seller ID
+    '',                   // Discord
+    '',                   // Email
+    data.orderNumber,     // Ticket Number
+    '',                   // Type
+    '',                   // Status
+    '',                   // Item Condition
+    '',                   // Item Note
+    '',                   // Margin
+    ''                    // Sales Price
+  ];
+
   const request = {
     spreadsheetId: process.env.GOOGLE_SHEET_ID,
     range: 'Sheet1!A1',
     valueInputOption: 'USER_ENTERED',
     insertDataOption: 'INSERT_ROWS',
     resource: {
-      values: [[
-        data.productName,
-        data.sku,
-        data.payout,
-        data.sellerId,
-        data.orderNumber
-      ]]
+      values: [row]
     }
   };
+
   await sheets.spreadsheets.values.append(request);
 }
+
 
 client.once('ready', () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
