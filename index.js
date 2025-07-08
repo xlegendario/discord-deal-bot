@@ -143,7 +143,7 @@ client.on(Events.InteractionCreate, async interaction => {
         'Brand': brand,
         'Purchase Price': Number(payout),
         'Shipping Deduction': 0,
-        'Purchase Date': new Date().toISOString(),
+        'Purchase Date': new Date(),
         'Seller ID': sellerId,
         'Ticket Number': channel.name,
         'Type': 'Direct',
