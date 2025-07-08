@@ -141,7 +141,7 @@ client.on(Events.InteractionCreate, async interaction => {
         'SKU': sku,
         'Size': size,
         'Brand': brand,
-        'Purchase Price': payout,
+        'Purchase Price': Number(payout),
         'Shipping Deduction': 0,
         'Purchase Date': new Date().toISOString(),
         'Seller ID': sellerId,
