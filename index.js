@@ -121,12 +121,20 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply({ content: '❌ Afbeelding of Seller ID ontbreekt.', flags: 1 << 6 });
     }
 
-    const dealMsg = messages.find(m => m.embeds.length > 0);
-    const embed = dealMsg?.embeds?.[0];
+    const sellerId = sellerMap.get(channel.id);
 
-    if (!embed || !embed.description) {
-      return interaction.reply({ content: '❌ Embed met dealinformatie ontbreekt.', flags: 1 << 6 });
+    if (!sellerId) {
+      return interaction.reply({ content: '❌ Seller ID ontbreekt.', flags: 1 << 6 });
     }
+
+    const imageMsg = messages.find(m =>
+      m.attachments.some(att => att.contentType?.startsWith('image/'))
+    );
+
+    if (!imageMsg) {
+      return interaction.reply({ content: '❌ Afbeelding ontbreekt.', flags: 1 << 6 });
+    }
+
 
     // ✅ define `lines` to fix crash
     const lines = embed.description.split('\n');
