@@ -26,7 +26,7 @@ const client = new Client({
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const PORT = process.env.PORT || 3000;
 
-const sellerMap = new Map(); // 🧠 Stores sellerId by channel ID
+const sellerMap = new Map(); // 🧠 Stores sellerId + recordId by channel ID
 
 client.once('ready', () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
@@ -39,8 +39,6 @@ app.post('/claim-deal', async (req, res) => {
   const pictureField = orderRecord.get('Picture');
   const imageUrl = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
 
-
-  // ✅ Use skuSoft if sku is empty/null
   const resolvedSku = sku && sku.trim() !== '' ? sku : skuSoft;
 
   if (!orderNumber || !productName || !resolvedSku || !size || !brand || !payout || !recordId) {
@@ -72,7 +70,6 @@ app.post('/claim-deal', async (req, res) => {
       embed.setImage(imageUrl);
     }
 
-
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('start_claim')
@@ -81,6 +78,9 @@ app.post('/claim-deal', async (req, res) => {
     );
 
     await channel.send({ embeds: [embed], components: [row] });
+
+    // Store seller info context (recordId will be used later during confirmation)
+    sellerMap.set(channel.id, { sellerId: null, recordId });
 
     await base('Unfulfilled Orders Log').update(recordId, {
       "Deal Invitation URL": invite.url
@@ -112,7 +112,10 @@ client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
     let sellerId = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
     sellerId = `SE-${sellerId.padStart(5, '0')}`;
-    sellerMap.set(interaction.channel.id, sellerId);
+
+    const channelId = interaction.channel.id;
+    const existing = sellerMap.get(channelId);
+    sellerMap.set(channelId, { ...(existing || {}), sellerId });
 
     await interaction.reply({
       content: `✅ Seller ID received: **${sellerId}**\nPlease upload a picture of the pair to prove it's in-hand.`,
@@ -124,10 +127,12 @@ client.on(Events.InteractionCreate, async interaction => {
     const channel = interaction.channel;
     const messages = await channel.messages.fetch({ limit: 50 });
 
-    const sellerId = sellerMap.get(channel.id);
-    if (!sellerId) {
-      return interaction.reply({ content: '❌ Seller ID is missing.', flags: 1 << 6 });
+    const sellerData = sellerMap.get(channel.id);
+    if (!sellerData || !sellerData.sellerId || !sellerData.recordId) {
+      return interaction.reply({ content: '❌ Seller ID or Record ID is missing.', flags: 1 << 6 });
     }
+
+    const { sellerId, recordId } = sellerData;
 
     const imageMsg = messages.find(m =>
       m.attachments.some(att => att.contentType?.startsWith('image/'))
@@ -187,7 +192,7 @@ client.on(Events.InteractionCreate, async interaction => {
         'Payment Status': 'To Pay',
         'Availability Status': 'Available',
         'Margin %': '10%',
-        'Unfulfilled Orders Log': recordId  // ✅ add this line
+        'Unfulfilled Orders Log': [recordId]
       });
 
       await interaction.reply({ content: '✅ Deal successfully added to Airtable!', flags: 1 << 6 });
