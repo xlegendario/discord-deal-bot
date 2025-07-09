@@ -61,7 +61,7 @@ app.post('/claim-deal', async (req, res) => {
 
     const embed = new EmbedBuilder()
       .setTitle("💸 Deal Claimed")
-      .setDescription(`Check out your deal below:\n\n**Product:** ${productName}\n**SKU:** ${resolvedSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout}`)
+      .setDescription(`Check out your deal below:\n\n**Product:** ${productName}\n**SKU:** ${normalizedSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
       .setColor(0x00AE86);
 
     const row = new ActionRowBuilder().addComponents(
