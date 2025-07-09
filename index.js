@@ -128,7 +128,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     await base('Unfulfilled Orders Log').update(recordId, {
-      "Fulfillment Status": { name: "Outsource" },
+      "Fulfillment Status": "Outsource",
       "Outsource Start Time": new Date().toISOString()
     });
 
