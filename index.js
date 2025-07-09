@@ -92,8 +92,9 @@ app.post('/claim-deal', async (req, res) => {
 
     await base('Unfulfilled Orders Log').update(recordId, {
       "Deal Invitation URL": invite.url,
-      "Fulfillment Status": { name: "Claim Processing" }
+      "Fulfillment Status": "Claim Processing"  // ← Try direct string format
     });
+
 
     res.redirect(302, `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`);
   } catch (err) {
