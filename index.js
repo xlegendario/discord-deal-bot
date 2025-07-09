@@ -190,7 +190,7 @@ client.on(Events.InteractionCreate, async interaction => {
         'Type': 'Direct',
         'Verification Status': 'Verified',
         'Payment Status': 'To Pay',
-        'Availability Status': 'Available',
+        'Availability Status': 'Reserved',
         'Margin %': '10%',
         'Unfulfilled Orders Log': [recordId]
       });
