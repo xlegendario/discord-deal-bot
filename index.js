@@ -137,8 +137,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
     await base('Unfulfilled Orders Log').update(recordId, {
       "Fulfillment Status": "Outsource",
-      "Outsource Start Time": new Date().toISOString()
+      "Outsource Start Time": new Date().toISOString(),
+      "Deal Invitation URL": ""  // ← clear the URL here
     });
+
 
     await interaction.reply({ content: '✅ Deal has been cancelled and status reset.', flags: 1 << 6 });
   }
