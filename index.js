@@ -186,7 +186,8 @@ client.on(Events.InteractionCreate, async interaction => {
         'Verification Status': 'Verified',
         'Payment Status': 'To Pay',
         'Availability Status': 'Available',
-        'Margin %': '10%'
+        'Margin %': '10%',
+        'Unfulfilled Orders Log': [recordId]  // ✅ add this line
       });
 
       await interaction.reply({ content: '✅ Deal successfully added to Airtable!', flags: 1 << 6 });
