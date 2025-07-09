@@ -26,7 +26,7 @@ const client = new Client({
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const PORT = process.env.PORT || 3000;
 
-const sellerMap = new Map(); // 🧠 Stores sellerId + recordId by channel ID
+const sellerMap = new Map();
 
 client.once('ready', () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
@@ -35,13 +35,18 @@ client.once('ready', () => {
 app.post('/claim-deal', async (req, res) => {
   const { orderNumber, productName, sku, skuSoft, size, brand, payout, recordId } = req.body;
   console.log("Received POST /claim-deal with body:", req.body);
+
   const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
   const pictureField = orderRecord.get('Picture');
   const imageUrl = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
 
-  const resolvedSku = sku && sku.trim() !== '' ? sku : skuSoft;
+  const rawSku = Array.isArray(sku) ? sku[0] : (typeof sku === 'string' ? sku : '');
+  const rawSkuSoft = Array.isArray(skuSoft) ? skuSoft[0] : (typeof skuSoft === 'string' ? skuSoft : '');
+  const finalSku = rawSku.trim() !== '' ? rawSku.trim() : rawSkuSoft.trim();
 
-  if (!orderNumber || !productName || !resolvedSku || !size || !brand || !payout || !recordId) {
+  const cleanProductName = orderRecord.get('Product Name');
+
+  if (!orderNumber || !cleanProductName || !finalSku || !size || !brand || !payout || !recordId) {
     return res.status(400).send("Missing required fields");
   }
 
@@ -63,7 +68,7 @@ app.post('/claim-deal', async (req, res) => {
 
     const embed = new EmbedBuilder()
       .setTitle("💸 Deal Claimed")
-      .setDescription(`Check out your deal below:\n\n**Product:** ${productName}\n**SKU:** ${resolvedSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
+      .setDescription(`Check out your deal below:\n\n**Product:** ${cleanProductName}\n**SKU:** ${finalSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
       .setColor(0x00AE86);
 
     if (imageUrl) {
@@ -74,16 +79,20 @@ app.post('/claim-deal', async (req, res) => {
       new ButtonBuilder()
         .setCustomId('start_claim')
         .setLabel('Process Claim')
-        .setStyle(ButtonStyle.Primary)
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('cancel_deal')
+        .setLabel('Cancel Deal')
+        .setStyle(ButtonStyle.Danger)
     );
 
     await channel.send({ embeds: [embed], components: [row] });
 
-    // Store seller info context (recordId will be used later during confirmation)
     sellerMap.set(channel.id, { sellerId: null, recordId });
 
     await base('Unfulfilled Orders Log').update(recordId, {
-      "Deal Invitation URL": invite.url
+      "Deal Invitation URL": invite.url,
+      "Fulfillment Status": { name: "Claim Processing" }
     });
 
     res.redirect(302, `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`);
@@ -107,6 +116,22 @@ client.on(Events.InteractionCreate, async interaction => {
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     await interaction.showModal(modal);
+  }
+
+  if (interaction.isButton() && interaction.customId === 'cancel_deal') {
+    const sellerData = sellerMap.get(interaction.channel.id);
+    const recordId = sellerData?.recordId;
+
+    if (!recordId) {
+      return interaction.reply({ content: '❌ Record ID not found.', flags: 1 << 6 });
+    }
+
+    await base('Unfulfilled Orders Log').update(recordId, {
+      "Fulfillment Status": { name: "Outsource" },
+      "Outsource Start Time": new Date().toISOString()
+    });
+
+    await interaction.reply({ content: '❌ Deal has been cancelled and status reset.', flags: 1 << 6 });
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
@@ -153,12 +178,14 @@ client.on(Events.InteractionCreate, async interaction => {
     const getValueFromLine = (label) =>
       lines.find(line => line.includes(label))?.split(`${label}`)[1]?.trim() || '';
 
-    const productName = getValueFromLine('**Product:**');
     const sku = getValueFromLine('**SKU:**');
     const size = getValueFromLine('**Size:**');
     const brand = getValueFromLine('**Brand:**');
     const payout = getValueFromLine('**Payout:**')?.replace('€', '');
     const orderNumber = channel.name.split('-')[1];
+
+    const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
+    const cleanProductName = orderRecord.get('Product Name');
 
     try {
       const sellerRecords = await base('Sellers Database')
@@ -178,7 +205,7 @@ client.on(Events.InteractionCreate, async interaction => {
       const sellerRecordId = sellerRecords[0].id;
 
       await base('Inventory Units').create({
-        'Product Name': productName,
+        'Product Name': cleanProductName,
         'SKU': sku,
         'Size': size,
         'Brand': brand,
@@ -190,7 +217,7 @@ client.on(Events.InteractionCreate, async interaction => {
         'Type': 'Direct',
         'Verification Status': 'Verified',
         'Payment Status': 'To Pay',
-        'Availability Status': 'Available',
+        'Availability Status': 'Reserved',
         'Margin %': '10%',
         'Unfulfilled Orders Log': [recordId]
       });
