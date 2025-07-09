@@ -33,12 +33,13 @@ client.once('ready', () => {
 });
 
 app.post('/claim-deal', async (req, res) => {
-  const { orderNumber, productName, sku, size, brand, payout, recordId } = req.body;
+  const { orderNumber, productName, sku, skuSoft, size, brand, payout, recordId } = req.body;
   console.log("Received POST /claim-deal with body:", req.body);
 
-  const normalizedSku = Array.isArray(sku) ? sku[0] : sku;
+  // ✅ Use skuSoft if sku is empty/null
+  const resolvedSku = sku && sku.trim() !== '' ? sku : skuSoft;
 
-  if (!orderNumber || !productName || !normalizedSku || !size || !brand || !payout || !recordId) {
+  if (!orderNumber || !productName || !resolvedSku || !size || !brand || !payout || !recordId) {
     return res.status(400).send("Missing required fields");
   }
 
@@ -60,7 +61,7 @@ app.post('/claim-deal', async (req, res) => {
 
     const embed = new EmbedBuilder()
       .setTitle("💸 Deal Claimed")
-      .setDescription(`Check out your deal below:\n\n**Product:** ${productName}\n**SKU:** ${normalizedSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout}`)
+      .setDescription(`Check out your deal below:\n\n**Product:** ${productName}\n**SKU:** ${resolvedSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout}`)
       .setColor(0x00AE86);
 
     const row = new ActionRowBuilder().addComponents(
