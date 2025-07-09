@@ -35,13 +35,18 @@ client.once('ready', () => {
 app.post('/claim-deal', async (req, res) => {
   const { orderNumber, productName, sku, skuSoft, size, brand, payout, recordId } = req.body;
   console.log("Received POST /claim-deal with body:", req.body);
+
   const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
   const pictureField = orderRecord.get('Picture');
   const imageUrl = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
 
-  const resolvedSku = sku && sku.trim() !== '' ? sku : skuSoft;
+  const rawSku = Array.isArray(sku) ? sku[0] : sku || '';
+  const rawSkuSoft = Array.isArray(skuSoft) ? skuSoft[0] : skuSoft || '';
+  const finalSku = rawSku.trim() !== '' ? rawSku : rawSkuSoft;
 
-  if (!orderNumber || !productName || !resolvedSku || !size || !brand || !payout || !recordId) {
+  const cleanProductName = orderRecord.get('Product Name');
+
+  if (!orderNumber || !cleanProductName || !finalSku || !size || !brand || !payout || !recordId) {
     return res.status(400).send("Missing required fields");
   }
 
@@ -63,7 +68,7 @@ app.post('/claim-deal', async (req, res) => {
 
     const embed = new EmbedBuilder()
       .setTitle("💸 Deal Claimed")
-      .setDescription(`Check out your deal below:\n\n**Product:** ${productName}\n**SKU:** ${resolvedSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
+      .setDescription(`Check out your deal below:\n\n**Product:** ${cleanProductName}\n**SKU:** ${finalSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
       .setColor(0x00AE86);
 
     if (imageUrl) {
@@ -79,7 +84,6 @@ app.post('/claim-deal', async (req, res) => {
 
     await channel.send({ embeds: [embed], components: [row] });
 
-    // Store seller info context (recordId will be used later during confirmation)
     sellerMap.set(channel.id, { sellerId: null, recordId });
 
     await base('Unfulfilled Orders Log').update(recordId, {
@@ -153,13 +157,14 @@ client.on(Events.InteractionCreate, async interaction => {
     const getValueFromLine = (label) =>
       lines.find(line => line.includes(label))?.split(`${label}`)[1]?.trim() || '';
 
-    const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
-    const productName = orderRecord.get('Product Name');
     const sku = getValueFromLine('**SKU:**');
     const size = getValueFromLine('**Size:**');
     const brand = getValueFromLine('**Brand:**');
     const payout = getValueFromLine('**Payout:**')?.replace('€', '');
     const orderNumber = channel.name.split('-')[1];
+
+    const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
+    const cleanProductName = orderRecord.get('Product Name');
 
     try {
       const sellerRecords = await base('Sellers Database')
@@ -179,7 +184,7 @@ client.on(Events.InteractionCreate, async interaction => {
       const sellerRecordId = sellerRecords[0].id;
 
       await base('Inventory Units').create({
-        'Product Name': productName,
+        'Product Name': cleanProductName,
         'SKU': sku,
         'Size': size,
         'Brand': brand,
