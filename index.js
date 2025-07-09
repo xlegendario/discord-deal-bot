@@ -153,7 +153,8 @@ client.on(Events.InteractionCreate, async interaction => {
     const getValueFromLine = (label) =>
       lines.find(line => line.includes(label))?.split(`${label}`)[1]?.trim() || '';
 
-    const productName = getValueFromLine('**Product:**');
+    const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
+    const productName = orderRecord.get('Product Name');
     const sku = getValueFromLine('**SKU:**');
     const size = getValueFromLine('**Size:**');
     const brand = getValueFromLine('**Brand:**');
