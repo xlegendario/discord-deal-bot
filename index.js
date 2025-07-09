@@ -76,14 +76,8 @@ app.post('/claim-deal', async (req, res) => {
     }
 
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('start_claim')
-        .setLabel('Process Claim')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId('cancel_deal')
-        .setLabel('Cancel Deal')
-        .setStyle(ButtonStyle.Danger)
+      new ButtonBuilder().setCustomId('start_claim').setLabel('Process Claim').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('cancel_deal').setLabel('Cancel Deal').setStyle(ButtonStyle.Danger)
     );
 
     await channel.send({ embeds: [embed], components: [row] });
@@ -92,9 +86,8 @@ app.post('/claim-deal', async (req, res) => {
 
     await base('Unfulfilled Orders Log').update(recordId, {
       "Deal Invitation URL": invite.url,
-      "Fulfillment Status": "Claim Processing"  // ← Try direct string format
+      "Fulfillment Status": "Claim Processing"
     });
-
 
     res.redirect(302, `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`);
   } catch (err) {
@@ -120,8 +113,23 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 
   if (interaction.isButton() && interaction.customId === 'cancel_deal') {
-    const sellerData = sellerMap.get(interaction.channel.id);
-    const recordId = sellerData?.recordId;
+    let recordId = sellerMap.get(interaction.channel.id)?.recordId;
+
+    if (!recordId) {
+      const orderNumber = interaction.channel.name.split('deal-')[1]?.trim();
+      if (!orderNumber) {
+        return interaction.reply({ content: '❌ Cannot determine order number from channel name.', flags: 1 << 6 });
+      }
+
+      const records = await base('Unfulfilled Orders Log').select({
+        filterByFormula: `{Order Number} = "${orderNumber}"`,
+        maxRecords: 1
+      }).firstPage();
+
+      if (records.length > 0) {
+        recordId = records[0].id;
+      }
+    }
 
     if (!recordId) {
       return interaction.reply({ content: '❌ Record ID not found.', flags: 1 << 6 });
@@ -132,7 +140,7 @@ client.on(Events.InteractionCreate, async interaction => {
       "Outsource Start Time": new Date().toISOString()
     });
 
-    await interaction.reply({ content: '❌ Deal has been cancelled and status reset.', flags: 1 << 6 });
+    await interaction.reply({ content: '✅ Deal has been cancelled and status reset.', flags: 1 << 6 });
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
