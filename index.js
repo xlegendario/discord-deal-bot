@@ -35,6 +35,10 @@ client.once('ready', () => {
 app.post('/claim-deal', async (req, res) => {
   const { orderNumber, productName, sku, skuSoft, size, brand, payout, recordId } = req.body;
   console.log("Received POST /claim-deal with body:", req.body);
+  const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
+  const pictureField = orderRecord.get('Picture');
+  const imageUrl = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
+
 
   // ✅ Use skuSoft if sku is empty/null
   const resolvedSku = sku && sku.trim() !== '' ? sku : skuSoft;
@@ -63,6 +67,11 @@ app.post('/claim-deal', async (req, res) => {
       .setTitle("💸 Deal Claimed")
       .setDescription(`Check out your deal below:\n\n**Product:** ${productName}\n**SKU:** ${normalizedSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
       .setColor(0x00AE86);
+
+    if (imageUrl) {
+      embed.setImage(imageUrl);
+    }
+
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
