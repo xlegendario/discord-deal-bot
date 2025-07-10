@@ -64,9 +64,7 @@ app.post('/claim-deal', async (req, res) => {
   const finalSku = rawSku.trim() !== '' ? rawSku.trim() : rawSkuSoft.trim();
 
   const cleanProductName = orderRecord.get('Product Name');
-  const orderId = orderRecord.get('Order ID');
-
-  if (!orderId || !cleanProductName || !finalSku || !size || !brand || !payout || !recordId) {
+  if (!orderNumber || !cleanProductName || !finalSku || !size || !brand || !payout || !recordId) {
     return res.status(400).send("Missing required fields");
   }
 
@@ -75,7 +73,7 @@ app.post('/claim-deal', async (req, res) => {
     const category = await guild.channels.fetch(process.env.CATEGORY_ID);
 
     const channel = await guild.channels.create({
-      name: `${orderId.toLowerCase()}`,
+      name: `${orderNumber.toLowerCase()}`,
       type: ChannelType.GuildText,
       parent: category.id,
       permissionOverwrites: [
@@ -90,7 +88,7 @@ app.post('/claim-deal', async (req, res) => {
 
     const embed = new EmbedBuilder()
       .setTitle("💸 Deal Claimed")
-      .setDescription(`**Order:** ${orderId}\n**Product:** ${cleanProductName}\n**SKU:** ${finalSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
+      .setDescription(`**Order:** ${orderNumber}\n**Product:** ${cleanProductName}\n**SKU:** ${finalSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
       .setColor(0x00AE86);
 
     if (imageUrl) {
@@ -99,8 +97,7 @@ app.post('/claim-deal', async (req, res) => {
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('start_claim').setLabel('Process Claim').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId('cancel_deal').setLabel('Cancel Deal').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId('confirm_deal').setLabel('Confirm Deal').setStyle(ButtonStyle.Success)
+      new ButtonBuilder().setCustomId('cancel_deal').setLabel('Cancel Deal').setStyle(ButtonStyle.Danger)
     );
 
     await channel.send({ embeds: [embed], components: [row] });
@@ -136,16 +133,22 @@ client.on(Events.InteractionCreate, async interaction => {
 
   if (interaction.isModalSubmit() && interaction.customId === 'record_id_verify') {
     const recordId = interaction.fields.getTextInputValue('record_id').trim();
+
     try {
       const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
       const orderId = orderRecord.get('Order ID');
-      if (!orderId) return interaction.reply({ content: '❌ No Order ID found.', flags: 1 << 6 });
+
+      if (!orderId) {
+        return interaction.reply({ content: '❌ Could not find Order ID for this Claim ID.', flags: 0 });
+      }
 
       const guild = await client.guilds.fetch(process.env.GUILD_ID);
       const channels = await guild.channels.fetch();
       const dealChannel = channels.find(c => c.name.toLowerCase() === orderId.toLowerCase());
 
-      if (!dealChannel) return interaction.reply({ content: '❌ Deal channel not found.', flags: 1 << 6 });
+      if (!dealChannel) {
+        return interaction.reply({ content: '❌ Deal channel not found.', flags: 0 });
+      }
 
       await dealChannel.permissionOverwrites.create(interaction.user.id, {
         ViewChannel: true,
@@ -153,33 +156,39 @@ client.on(Events.InteractionCreate, async interaction => {
         ReadMessageHistory: true
       });
 
-      return interaction.reply({ content: `✅ Access granted to <#${dealChannel.id}>`, flags: 1 << 6 });
+      return interaction.reply({ content: `✅ Access granted to <#${dealChannel.id}>`, flags: 0 });
     } catch (err) {
       console.error('❌ Error verifying access:', err);
-      return interaction.reply({ content: '❌ Invalid Claim ID or error occurred.', flags: 1 << 6 });
+      return interaction.reply({ content: '❌ Invalid Claim ID or error occurred.', flags: 0 });
     }
   }
 
   if (interaction.isButton() && interaction.customId === 'start_claim') {
-    const modal = new ModalBuilder().setCustomId('seller_id_modal').setTitle('Enter Seller ID');
+    const modal = new ModalBuilder()
+      .setCustomId('seller_id_modal')
+      .setTitle('Enter Seller ID');
+
     const input = new TextInputBuilder()
       .setCustomId('seller_id')
-      .setLabel('Seller ID (e.g. 00001)')
+      .setLabel("Seller ID (e.g. 00001)")
       .setStyle(TextInputStyle.Short)
       .setRequired(true);
+
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     await interaction.showModal(modal);
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
-    let sellerId = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
-    sellerId = `SE-${sellerId.padStart(5, '0')}`;
+    const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
+    const sellerId = `SE-${sellerIdRaw.padStart(5, '0')}`;
+
     const channelId = interaction.channel.id;
     const existing = sellerMap.get(channelId);
     sellerMap.set(channelId, { ...(existing || {}), sellerId });
+
     await interaction.reply({
       content: `✅ Seller ID received: **${sellerId}**\nPlease upload a picture of the pair to prove it's in-hand.`,
-      flags: 1 << 6
+      flags: 0
     });
   }
 
@@ -194,10 +203,14 @@ client.on(Events.InteractionCreate, async interaction => {
         filterByFormula: `{Order ID} = "${orderNumber}"`,
         maxRecords: 1
       }).firstPage();
-      if (records.length > 0) recordId = records[0].id;
+      if (records.length > 0) {
+        recordId = records[0].id;
+      }
     }
 
-    if (!recordId) return interaction.reply({ content: '❌ Record ID not found.', flags: 1 << 6 });
+    if (!recordId) {
+      return interaction.reply({ content: '❌ Record ID not found.', flags: 0 });
+    }
 
     await base('Unfulfilled Orders Log').update(recordId, {
       "Fulfillment Status": "Outsource",
@@ -205,51 +218,63 @@ client.on(Events.InteractionCreate, async interaction => {
       "Deal Invitation URL": ""
     });
 
-    await interaction.reply({ content: '✅ Deal has been cancelled and status reset.', flags: 1 << 6 });
+    await interaction.reply({ content: '✅ Deal has been cancelled and status reset.', flags: 0 });
   }
 
   if (interaction.isButton() && interaction.customId === 'confirm_deal') {
     const memberRoles = interaction.member.roles.cache.map(role => role.id);
     const isAdmin = ADMIN_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
-    if (!isAdmin) return interaction.reply({ content: '❌ You are not authorized.', flags: 1 << 6 });
+    if (!isAdmin) {
+      return interaction.reply({ content: '❌ You are not authorized.', flags: 0 });
+    }
 
     const channel = interaction.channel;
     const messages = await channel.messages.fetch({ limit: 50 });
+
     const sellerData = sellerMap.get(channel.id);
     if (!sellerData || !sellerData.sellerId || !sellerData.recordId) {
-      return interaction.reply({ content: '❌ Seller ID or record ID missing.', flags: 1 << 6 });
+      return interaction.reply({ content: '❌ Missing Seller ID or Claim ID.', flags: 0 });
     }
 
-    const imageMsg = messages.find(m => m.attachments.size > 0);
-    if (!imageMsg) return interaction.reply({ content: '❌ No image uploaded.', flags: 1 << 6 });
+    const imageMsg = messages.find(m =>
+      m.attachments.size > 0 && [...m.attachments.values()].some(att => att.contentType?.startsWith('image/'))
+    );
+
+    if (!imageMsg) {
+      return interaction.reply({ content: '❌ No image found in recent messages.', flags: 0 });
+    }
 
     const dealMsg = messages.find(m => m.embeds.length > 0);
     const embed = dealMsg?.embeds?.[0];
-    if (!embed || !embed.description) return interaction.reply({ content: '❌ Embed missing.', flags: 1 << 6 });
+    if (!embed || !embed.description) {
+      return interaction.reply({ content: '❌ Missing deal embed.', flags: 0 });
+    }
 
     const lines = embed.description.split('\n');
-    const getVal = label => lines.find(l => l.includes(label))?.split(label)[1]?.trim() || '';
-    const sku = getVal('**SKU:**');
-    const size = getVal('**Size:**');
-    const brand = getVal('**Brand:**');
-    const payout = getVal('**Payout:**')?.replace('€', '');
-    const orderNumber = getVal('**Order:**');
+    const getValue = label => lines.find(line => line.includes(label))?.split(label)[1]?.trim() || '';
+
+    const sku = getValue('**SKU:**');
+    const size = getValue('**Size:**');
+    const brand = getValue('**Brand:**');
+    const payout = parseFloat(getValue('**Payout:**')?.replace('€', '') || 0);
+    const orderNumber = getValue('**Order:**');
     const orderRecord = await base('Unfulfilled Orders Log').find(sellerData.recordId);
     const productName = orderRecord.get('Product Name');
 
-    const sellerRecords = await base('Sellers Database').select({
-      filterByFormula: `{Seller ID} = "${sellerData.sellerId}"`,
-      maxRecords: 1
-    }).firstPage();
+    const sellerRecords = await base('Sellers Database')
+      .select({ filterByFormula: `{Seller ID} = "${sellerData.sellerId}"`, maxRecords: 1 })
+      .firstPage();
 
-    if (!sellerRecords.length) return interaction.reply({ content: `❌ Seller not found in Airtable.`, flags: 1 << 6 });
+    if (!sellerRecords.length) {
+      return interaction.reply({ content: '❌ Seller ID not found in Airtable.', flags: 0 });
+    }
 
     await base('Inventory Units').create({
       'Product Name': productName,
       'SKU': sku,
       'Size': size,
       'Brand': brand,
-      'Purchase Price': parseFloat(payout),
+      'Purchase Price': payout,
       'Shipping Deduction': 0,
       'Purchase Date': new Date().toISOString().split('T')[0],
       'Seller ID': [sellerRecords[0].id],
@@ -262,7 +287,29 @@ client.on(Events.InteractionCreate, async interaction => {
       'Unfulfilled Orders Log': [sellerData.recordId]
     });
 
-    await interaction.reply({ content: '✅ Deal successfully added to Airtable!', flags: 1 << 6 });
+    await interaction.reply({ content: '✅ Deal added to Airtable.', flags: 0 });
+  }
+});
+
+client.on(Events.MessageCreate, async message => {
+  if (
+    message.channel.name.toUpperCase().startsWith('ORD-') &&
+    message.attachments.size > 0
+  ) {
+    const data = sellerMap.get(message.channel.id);
+    if (!data?.sellerId) return;
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('confirm_deal')
+        .setLabel('Confirm Deal')
+        .setStyle(ButtonStyle.Success)
+    );
+
+    await message.channel.send({
+      content: 'Admin: click below to confirm the deal.',
+      components: [row]
+    });
   }
 });
 
