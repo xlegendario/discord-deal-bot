@@ -158,7 +158,7 @@ client.on(Events.InteractionCreate, async interaction => {
         ReadMessageHistory: true
       });
 
-      return interaction.reply({ content: `✅ Access granted to <#${dealChannel.id}>`, flags: 0 });
+      return interaction.reply({ content: `✅ Access granted to <#${dealChannel.id}>`, ephemeral: true });
     } catch (err) {
       console.error('❌ Error verifying access:', err);
       return interaction.reply({ content: '❌ Invalid Claim ID or error occurred.', flags: 0 });
@@ -220,7 +220,13 @@ client.on(Events.InteractionCreate, async interaction => {
       "Deal Invitation URL": ""
     });
 
-    const transcript = await createTranscript(channel, { limit: -1, returnBuffer: false, fileName: `${channel.name}.html` });
+    const transcriptFileName = `transcript-${channel.name}.html`;
+    const transcript = await createTranscript(channel, {
+      limit: -1,
+      returnBuffer: false,
+      fileName: transcriptFileName
+    });
+
     const transcriptsChannel = await client.channels.fetch(TRANSCRIPTS_CHANNEL_ID);
     if (transcriptsChannel && transcriptsChannel.isTextBased()) {
       await transcriptsChannel.send({
@@ -229,7 +235,8 @@ client.on(Events.InteractionCreate, async interaction => {
       });
     }
 
-    await interaction.reply({ content: '✅ Deal has been cancelled. Channel will be deleted shortly.', flags: 0 });
+
+    await interaction.reply({ content: '✅ Deal has been finished or cancelled. Channel will be deleted shortly.', flags: 0 });
     setTimeout(() => channel.delete().catch(console.error), 3000);
   }
 
