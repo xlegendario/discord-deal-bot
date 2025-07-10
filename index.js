@@ -27,8 +27,6 @@ const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process
 const PORT = process.env.PORT || 3000;
 const VERIFY_CHANNEL_ID = '1392824220895019078';
 
-const sellerMap = new Map();
-
 client.once('ready', async () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
 
@@ -36,7 +34,7 @@ client.once('ready', async () => {
   if (channel && channel.isTextBased()) {
     const embed = new EmbedBuilder()
       .setTitle('🔐 Verify Deal Access')
-      .setDescription('Click the button below and enter your Record ID to unlock access to your deal channel.')
+      .setDescription('Click the button below and enter your **Claim ID** to unlock access to your deal channel.')
       .setColor(0x5865F2);
 
     const button = new ActionRowBuilder().addComponents(
@@ -54,11 +52,11 @@ client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isButton() && interaction.customId === 'verify_access') {
     const modal = new ModalBuilder()
       .setCustomId('record_id_verify')
-      .setTitle('Verify Deal Access');
+      .setTitle('Verify Deal Access - Claim ID');
 
     const input = new TextInputBuilder()
       .setCustomId('record_id')
-      .setLabel('Paste your Record ID (recXXXX)')
+      .setLabel('Paste your Claim ID (e.g. recXXXX)')
       .setStyle(TextInputStyle.Short)
       .setRequired(true);
 
@@ -72,7 +70,7 @@ client.on(Events.InteractionCreate, async interaction => {
     try {
       const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
       const orderNumber = orderRecord.get('Order Number');
-      const dealChannelName = `deal-${orderNumber}`;
+      const dealChannelName = orderNumber; // no "deal-" prefix
 
       const guild = await client.guilds.fetch(process.env.GUILD_ID);
       const channels = await guild.channels.fetch();
@@ -94,14 +92,10 @@ client.on(Events.InteractionCreate, async interaction => {
       });
     } catch (err) {
       console.error('❌ Error verifying access:', err);
-      return interaction.reply({ content: '❌ Invalid Record ID or error occurred.', ephemeral: true });
+      return interaction.reply({ content: '❌ Invalid Claim ID or error occurred.', ephemeral: true });
     }
   }
 });
-
-// ➤ Keep your existing code here: /claim-deal route, seller_id modal, confirm_deal, etc.
-// ➤ No changes needed to those parts
-// ➤ Just make sure deal channels are named like "deal-ORD-000162"
 
 client.login(process.env.DISCORD_TOKEN);
 app.listen(PORT, () => {
