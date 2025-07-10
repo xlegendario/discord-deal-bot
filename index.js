@@ -38,7 +38,7 @@ client.once('ready', async () => {
     const embed = new EmbedBuilder()
       .setTitle('🔐 Verify Deal Access')
       .setDescription('Click the button below and enter your **Claim ID** to unlock access to your deal channel.')
-      .setColor(0x5865F2);
+      .setColor(0xFFED00);
 
     const button = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -89,7 +89,7 @@ app.post('/claim-deal', async (req, res) => {
     const embed = new EmbedBuilder()
       .setTitle("💸 Deal Claimed")
       .setDescription(`**Order:** ${orderNumber}\n**Product:** ${cleanProductName}\n**SKU:** ${finalSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
-      .setColor(0x00AE86);
+      .setColor(0xFFED00);
 
     if (imageUrl) {
       embed.setImage(imageUrl);
@@ -218,14 +218,14 @@ client.on(Events.InteractionCreate, async interaction => {
       "Deal Invitation URL": ""
     });
 
-    await interaction.reply({ content: '✅ Deal has been cancelled and status reset.', flags: 0 });
+    await interaction.reply({ content: '✅ Deal has been cancelled.', flags: 0 });
   }
 
   if (interaction.isButton() && interaction.customId === 'confirm_deal') {
     const memberRoles = interaction.member.roles.cache.map(role => role.id);
     const isAdmin = ADMIN_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
     if (!isAdmin) {
-      return interaction.reply({ content: '❌ You are not authorized.', flags: 0 });
+      return interaction.reply({ content: '❌ You are not authorized to confirm the deal.', flags: 0 });
     }
 
     const channel = interaction.channel;
@@ -266,7 +266,7 @@ client.on(Events.InteractionCreate, async interaction => {
       .firstPage();
 
     if (!sellerRecords.length) {
-      return interaction.reply({ content: '❌ Seller ID not found in Airtable.', flags: 0 });
+      return interaction.reply({ content: '❌ Seller ID not found in our system.', flags: 0 });
     }
 
     await base('Inventory Units').create({
@@ -287,7 +287,7 @@ client.on(Events.InteractionCreate, async interaction => {
       'Unfulfilled Orders Log': [sellerData.recordId]
     });
 
-    await interaction.reply({ content: '✅ Deal added to Airtable.', flags: 0 });
+    await interaction.reply({ content: '✅ Deal processed!', flags: 0 });
   }
 });
 
