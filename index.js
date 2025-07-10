@@ -134,36 +134,37 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'record_id_verify') {
-    const recordId = interaction.fields.getTextInputValue('record_id').trim();
-
-    try {
-      const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
-      const orderId = orderRecord.get('Order ID');
-      if (!orderId) {
-        return interaction.reply({ content: '❌ Could not find Order ID for this Claim ID.', flags: 1 << 6 });
-      }
-
-      const guild = await client.guilds.fetch(process.env.GUILD_ID);
-      const channels = await guild.channels.fetch();
-      const dealChannel = channels.find(c => c.name === orderId);
-
-      if (!dealChannel) {
-        return interaction.reply({ content: '❌ Deal channel not found.', flags: 1 << 6 });
-      }
-
-      await dealChannel.permissionOverwrites.create(interaction.user.id, {
-        ViewChannel: true,
-        SendMessages: true,
-        ReadMessageHistory: true
-      });
-
-      return interaction.reply({ content: `✅ Access granted to <#${dealChannel.id}>`, flags: 1 << 6 });
-    } catch (err) {
-      console.error('❌ Error verifying access:', err);
-      return interaction.reply({ content: '❌ Invalid Claim ID or error occurred.', flags: 1 << 6 });
+  const recordId = interaction.fields.getTextInputValue('record_id').trim();
+  try {
+    const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
+    const orderNumber = orderRecord.get('Order ID'); // Make sure 'Order ID' is the correct Airtable field
+    if (!orderNumber) {
+      return interaction.reply({ content: '❌ Could not find Order ID for this Claim ID.', flags: 1 << 6 });
     }
+
+    const guild = await client.guilds.fetch(process.env.GUILD_ID);
+    const channels = await guild.channels.fetch();
+    
+    // 🔧 Fix: make comparison case-insensitive
+    const dealChannel = channels.find(c => c.name.toLowerCase() === orderNumber.toLowerCase());
+
+    if (!dealChannel) {
+      return interaction.reply({ content: '❌ Deal channel not found.', flags: 1 << 6 });
+    }
+
+    await dealChannel.permissionOverwrites.create(interaction.user.id, {
+      ViewChannel: true,
+      SendMessages: true,
+      ReadMessageHistory: true
+    });
+
+    return interaction.reply({ content: `✅ Access granted to <#${dealChannel.id}>`, flags: 1 << 6 });
+  } catch (err) {
+    console.error('❌ Error verifying access:', err);
+    return interaction.reply({ content: '❌ Invalid Claim ID or error occurred.', flags: 1 << 6 });
   }
-});
+}
+
 
 client.login(process.env.DISCORD_TOKEN);
 app.listen(PORT, () => {
