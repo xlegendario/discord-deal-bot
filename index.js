@@ -145,7 +145,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const guild = await client.guilds.fetch(process.env.GUILD_ID);
       const channels = await guild.channels.fetch();
-      const dealChannel = channels.find(c => c.name.toLowerCase() === orderId.toLowerCase());
+      const dealChannel = channels.find(c => c.name === orderId.toLowerCase());
 
       if (!dealChannel) {
         return interaction.reply({ content: '❌ Deal channel not found.', flags: 1 << 6 });
@@ -162,6 +162,36 @@ client.on(Events.InteractionCreate, async interaction => {
       console.error('❌ Error verifying access:', err);
       return interaction.reply({ content: '❌ Invalid Claim ID or error occurred.', flags: 1 << 6 });
     }
+  }
+
+  if (interaction.isButton() && interaction.customId === 'start_claim') {
+    const modal = new ModalBuilder()
+      .setCustomId('seller_id_modal')
+      .setTitle('Please fill in your Seller ID');
+
+    const input = new TextInputBuilder()
+      .setCustomId('seller_id')
+      .setLabel("Seller ID (numerical, e.g. 00001)")
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    await interaction.showModal(modal);
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
+    const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
+    const sellerId = `SE-${sellerIdRaw.padStart(5, '0')}`;
+
+    sellerMap.set(interaction.channel.id, {
+      ...(sellerMap.get(interaction.channel.id) || {}),
+      sellerId
+    });
+
+    await interaction.reply({
+      content: `✅ Seller ID received: **${sellerId}**\nPlease upload a picture of the pair to prove it's in-hand.`,
+      flags: 1 << 6
+    });
   }
 });
 
