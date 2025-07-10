@@ -55,7 +55,7 @@ app.post('/claim-deal', async (req, res) => {
     const category = await guild.channels.fetch(process.env.CATEGORY_ID);
 
     const channel = await guild.channels.create({
-      name: `deal-${orderNumber}`,
+      name: `deal-${orderNumber.toLowerCase()}`,
       type: ChannelType.GuildText,
       parent: category.id,
       permissionOverwrites: [{
@@ -68,7 +68,7 @@ app.post('/claim-deal', async (req, res) => {
 
     const embed = new EmbedBuilder()
       .setTitle("💸 Deal Claimed")
-      .setDescription(`Check out your deal below:\n\n**Product:** ${cleanProductName}\n**SKU:** ${finalSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
+      .setDescription(`Check out your deal below:\n\n**Order:** ${orderNumber}\n**Product:** ${cleanProductName}\n**SKU:** ${finalSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
       .setColor(0x00AE86);
 
     if (imageUrl) {
@@ -116,16 +116,10 @@ client.on(Events.InteractionCreate, async interaction => {
     let recordId = sellerMap.get(interaction.channel.id)?.recordId;
 
     if (!recordId) {
-      const orderNumber = interaction.channel.name.split('deal-')[1]?.trim();
-      if (!orderNumber) {
-        return interaction.reply({ content: '❌ Cannot determine order number from channel name.', flags: 1 << 6 });
-      }
-
+      const orderNumber = interaction.channel.name.split('deal-')[1]?.trim().toUpperCase();
       const records = await base('Unfulfilled Orders Log').select({
-        filterByFormula: `{Order Number} = "${orderNumber}"`,
-        maxRecords: 1
+        filterByFormula: `{Order Number} = "${orderNumber}"`
       }).firstPage();
-
       if (records.length > 0) {
         recordId = records[0].id;
       }
@@ -138,9 +132,8 @@ client.on(Events.InteractionCreate, async interaction => {
     await base('Unfulfilled Orders Log').update(recordId, {
       "Fulfillment Status": "Outsource",
       "Outsource Start Time": new Date().toISOString(),
-      "Deal Invitation URL": ""  // ← clear the URL here
+      "Deal Invitation URL": ""
     });
-
 
     await interaction.reply({ content: '✅ Deal has been cancelled and status reset.', flags: 1 << 6 });
   }
@@ -160,15 +153,37 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 
   if (interaction.isButton() && interaction.customId === 'confirm_deal') {
+    const allowedRoles = ['1100568786744119376', '1150412914696650786'];
+    const userRoles = interaction.member.roles.cache.map(role => role.id);
+    const isAdmin = allowedRoles.some(roleId => userRoles.includes(roleId));
+
+    if (!isAdmin) {
+      return interaction.reply({
+        content: '❌ You are not authorized to confirm this deal.',
+        flags: 1 << 6
+      });
+    }
+
     const channel = interaction.channel;
     const messages = await channel.messages.fetch({ limit: 50 });
 
     const sellerData = sellerMap.get(channel.id);
-    if (!sellerData || !sellerData.sellerId || !sellerData.recordId) {
-      return interaction.reply({ content: '❌ Seller ID or Record ID is missing.', flags: 1 << 6 });
+    let recordId = sellerData?.recordId;
+    const sellerId = sellerData?.sellerId;
+
+    if (!recordId || !sellerId) {
+      const orderNumber = channel.name.split('deal-')[1]?.toUpperCase();
+      const records = await base('Unfulfilled Orders Log').select({
+        filterByFormula: `{Order Number} = "${orderNumber}"`
+      }).firstPage();
+      if (records.length > 0) {
+        recordId = records[0].id;
+      }
     }
 
-    const { sellerId, recordId } = sellerData;
+    if (!recordId || !sellerId) {
+      return interaction.reply({ content: '❌ Seller ID or record not found.', flags: 1 << 6 });
+    }
 
     const imageMsg = messages.find(m =>
       m.attachments.some(att => att.contentType?.startsWith('image/'))
@@ -193,7 +208,7 @@ client.on(Events.InteractionCreate, async interaction => {
     const size = getValueFromLine('**Size:**');
     const brand = getValueFromLine('**Brand:**');
     const payout = getValueFromLine('**Payout:**')?.replace('€', '');
-    const orderNumber = channel.name.split('-')[1];
+    const orderNumber = getValueFromLine('**Order:**') || channel.name.split('-')[1]?.toUpperCase();
 
     const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
     const cleanProductName = orderRecord.get('Product Name');
@@ -224,7 +239,7 @@ client.on(Events.InteractionCreate, async interaction => {
         'Shipping Deduction': 0,
         'Purchase Date': new Date().toISOString().split('T')[0],
         'Seller ID': [sellerRecordId],
-        'Ticket Number': channel.name,
+        'Ticket Number': orderNumber,
         'Type': 'Direct',
         'Verification Status': 'Verified',
         'Payment Status': 'To Pay',
