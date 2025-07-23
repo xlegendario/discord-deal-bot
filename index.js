@@ -315,6 +315,11 @@ client.on(Events.InteractionCreate, async interaction => {
       'Unfulfilled Orders Log': [sellerData.recordId]
     });
 
+    // ✅ Also check the "Outsourced?" checkbox in the linked record
+    await base('Unfulfilled Orders Log').update(sellerData.recordId, {
+      'Outsourced?': true
+    });
+
     await interaction.reply({ content: '✅ Deal processed!', flags: 0 });
   }
 });
