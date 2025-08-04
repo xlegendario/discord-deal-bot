@@ -177,48 +177,26 @@ client.on(Events.InteractionCreate, async interaction => {
     return interaction.reply({ content: '❌ An error occurred while verifying the Seller ID.', ephemeral: true });
   }
 }
-  if (interaction.isButton()) {
+  if (interaction.isButton() && ['confirm_seller', 'reject_seller'].includes(interaction.customId)) {
   const data = sellerMap.get(interaction.channel.id);
 
   if (interaction.customId === 'confirm_seller') {
     sellerMap.set(interaction.channel.id, { ...data, confirmed: true });
 
-    // Disable the buttons
-    await interaction.message.edit({
-      components: interaction.message.components.map(row => {
-        row.components.forEach(c => c.setDisabled(true));
-        return row;
-      })
-    });
-
-    await interaction.reply({
-      content: `✅ Seller ID confirmed.
-  Please upload **6 different** pictures of the pair like shown below to prove it's in-hand and complete.`,
-      files: ['https://i.imgur.com/JKaeeNz.png'],
-      ephemeral: false
+    await interaction.update({
+      content: `✅ Seller ID confirmed.\nPlease upload **6 different** pictures of the pair like shown below to prove it's in-hand and complete.`,
+      components: [],
+      files: ['https://i.imgur.com/JKaeeNz.png']
     });
   }
 
   if (interaction.customId === 'reject_seller') {
-    // Disable the buttons
-    await interaction.message.edit({
-      components: interaction.message.components.map(row => {
-        row.components.forEach(c => c.setDisabled(true));
-        return row;
-      })
-    });
-
-    await interaction.reply({
-      content: `⚠️ Please check if the Seller ID was filled in correctly.
-
-  If you're using a Seller ID from before **02/06/2025**, it's no longer valid.
-
-  Please click **"Process Claim"** again to fill in your correct Seller ID.`,
-      ephemeral: true
+    await interaction.update({
+      content: `⚠️ Please check if the Seller ID was filled in correctly.\n\nIf you're using a Seller ID from before **02/06/2025**, it's no longer valid.\n\nPlease click **"Process Claim"** again to fill in your correct Seller ID.`,
+      components: []
     });
   }
 }
-
 
   if (interaction.isButton() && interaction.customId === 'start_claim') {
     const modal = new ModalBuilder()
