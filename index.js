@@ -183,18 +183,37 @@ client.on(Events.InteractionCreate, async interaction => {
   if (interaction.customId === 'confirm_seller') {
     sellerMap.set(interaction.channel.id, { ...data, confirmed: true });
 
+    // Disable the buttons
+    await interaction.message.edit({
+      components: interaction.message.components.map(row => {
+        row.components.forEach(c => c.setDisabled(true));
+        return row;
+      })
+    });
+
     await interaction.reply({
       content: `✅ Seller ID confirmed.
-Please upload **6 different** pictures of the pair like shown below to prove it's in-hand and complete.`,
+  Please upload **6 different** pictures of the pair like shown below to prove it's in-hand and complete.`,
       files: ['https://i.imgur.com/JKaeeNz.png'],
       ephemeral: false
     });
   }
 
   if (interaction.customId === 'reject_seller') {
+    // Disable the buttons
+    await interaction.message.edit({
+      components: interaction.message.components.map(row => {
+        row.components.forEach(c => c.setDisabled(true));
+        return row;
+      })
+    });
+
     await interaction.reply({
       content: `⚠️ Please check if the Seller ID was filled in correctly.
-If you're using a Seller ID from before **02/06/2025**, it's no longer valid. Please create a new one.`,
+
+  If you're using a Seller ID from before **02/06/2025**, it's no longer valid.
+
+  Please click **"Process Claim"** again to fill in your correct Seller ID.`,
       ephemeral: true
     });
   }
