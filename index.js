@@ -135,37 +135,71 @@ client.on(Events.InteractionCreate, async interaction => {
     await interaction.showModal(modal);
   }
 
-  if (interaction.isModalSubmit() && interaction.customId === 'record_id_verify') {
-    const recordId = interaction.fields.getTextInputValue('record_id').trim();
+  if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
+  const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
+  const sellerId = `SE-${sellerIdRaw.padStart(5, '0')}`;
+  const channelId = interaction.channel.id;
 
-    try {
-      const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
-      const orderId = orderRecord.get('Order ID');
+  try {
+    const sellerRecords = await base('Sellers Database')
+      .select({ filterByFormula: `{Seller ID} = "${sellerId}"`, maxRecords: 1 })
+      .firstPage();
 
-      if (!orderId) {
-        return interaction.reply({ content: '❌ Could not find Order ID for this Claim ID.', flags: 0 });
-      }
-
-      const guild = await client.guilds.fetch(process.env.GUILD_ID);
-      const channels = await guild.channels.fetch();
-      const dealChannel = channels.find(c => c.name.toLowerCase() === orderId.toLowerCase());
-
-      if (!dealChannel) {
-        return interaction.reply({ content: '❌ Deal channel not found.', flags: 0 });
-      }
-
-      await dealChannel.permissionOverwrites.create(interaction.user.id, {
-        ViewChannel: true,
-        SendMessages: true,
-        ReadMessageHistory: true
+    if (sellerRecords.length === 0) {
+      return interaction.reply({
+        content: `❌ Seller ID **${sellerId}** not found. Please double-check it or create a new one if your ID is from before **02/06/2025**.`,
+        ephemeral: true
       });
-
-      return interaction.reply({ content: `✅ Access granted to <#${dealChannel.id}>`, ephemeral: true });
-    } catch (err) {
-      console.error('❌ Error verifying access:', err);
-      return interaction.reply({ content: '❌ Invalid Claim ID or error occurred.', flags: 0 });
     }
+
+    const sellerRecord = sellerRecords[0];
+    const discordUsername = sellerRecord.get('Discord') || 'Unknown';
+
+    sellerMap.set(channelId, {
+      ...(sellerMap.get(channelId) || {}),
+      sellerId,
+      recordId: sellerRecord.id,
+      confirmed: false
+    });
+
+    const confirmRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('confirm_seller').setLabel('✅ Yes, that is me').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId('reject_seller').setLabel('❌ No, not me').setStyle(ButtonStyle.Danger)
+    );
+
+    await interaction.reply({
+      content: `🔍 We found this Discord Username linked to Seller ID **${sellerId}**:\n**${discordUsername}**\n\nIs this you?`,
+      components: [confirmRow],
+      ephemeral: true
+    });
+  } catch (err) {
+    console.error('❌ Error verifying Seller ID:', err);
+    return interaction.reply({ content: '❌ An error occurred while verifying the Seller ID.', ephemeral: true });
   }
+}
+  if (interaction.isButton()) {
+  const data = sellerMap.get(interaction.channel.id);
+
+  if (interaction.customId === 'confirm_seller') {
+    sellerMap.set(interaction.channel.id, { ...data, confirmed: true });
+
+    await interaction.reply({
+      content: `✅ Seller ID confirmed.
+Please upload **6 different** pictures of the pair like shown below to prove it's in-hand and complete.`,
+      files: ['https://i.imgur.com/JKaeeNz.png'],
+      ephemeral: false
+    });
+  }
+
+  if (interaction.customId === 'reject_seller') {
+    await interaction.reply({
+      content: `⚠️ Please check if the Seller ID was filled in correctly.
+If you're using a Seller ID from before **02/06/2025**, it's no longer valid. Please create a new one.`,
+      ephemeral: true
+    });
+  }
+}
+
 
   if (interaction.isButton() && interaction.customId === 'start_claim') {
     const modal = new ModalBuilder()
@@ -180,21 +214,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     await interaction.showModal(modal);
-  }
-
-  if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
-    const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
-    const sellerId = `SE-${sellerIdRaw.padStart(5, '0')}`;
-
-    const channelId = interaction.channel.id;
-    const existing = sellerMap.get(channelId);
-    sellerMap.set(channelId, { ...(existing || {}), sellerId });
-
-    await interaction.reply({
-      content: `✅ Seller ID received: **${sellerId}**\nPlease upload **6 pictures** of the pair like in the image below, to prove it's in-hand and all good.`,
-      files: ['https://i.imgur.com/JKaeeNz.png'], // Replace with your actual collage image URL
-      flags: 0
-    });
   }
 
   if (interaction.isButton() && interaction.customId === 'cancel_deal') {
@@ -333,7 +352,7 @@ client.on(Events.MessageCreate, async message => {
     message.attachments.size > 0
   ) {
     const data = sellerMap.get(message.channel.id);
-    if (!data?.sellerId) return;
+    if (!data?.sellerId || !data?.confirmed) return;
 
     const currentUploads = uploadedImagesMap.get(message.channel.id) || [];
 
