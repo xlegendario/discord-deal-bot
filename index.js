@@ -347,7 +347,10 @@ client.on(Events.MessageCreate, async message => {
     }
 
     const uploadedCount = currentUploads.length;
-    await message.channel.send(`📸 You've uploaded ${uploadedCount}/6 required pictures.`);
+
+    if (!message.author.bot) {
+      await message.channel.send(`📸 You've uploaded ${uploadedCount}/6 required pictures.`);
+    }
 
     if (uploadedCount >= 6 && !data?.confirmSent) {
       const row = new ActionRowBuilder().addComponents(
@@ -365,6 +368,7 @@ client.on(Events.MessageCreate, async message => {
       sellerMap.set(message.channel.id, { ...data, confirmSent: true });
     }
   }
+});
 
 
   if (message.content === '!finish' && message.channel.name.toLowerCase().startsWith('ord-')) {
