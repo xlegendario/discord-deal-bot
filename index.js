@@ -191,7 +191,7 @@ client.on(Events.InteractionCreate, async interaction => {
     sellerMap.set(channelId, { ...(existing || {}), sellerId });
 
     await interaction.reply({
-      content: `✅ Seller ID received: **${sellerId}**\nPlease upload 6 **different** pictures of the pair to prove it's in-hand.`,
+      content: `✅ Seller ID received: **${sellerId}**\nPlease upload **6 pictures** of the pair like in the image below, to prove it's in-hand and all good.`,
       files: ['https://i.imgur.com/JKaeeNz.png'], // Replace with your actual collage image URL
       flags: 0
     });
