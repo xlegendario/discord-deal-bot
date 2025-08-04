@@ -31,6 +31,8 @@ const TRANSCRIPTS_CHANNEL_ID = process.env.TRANSCRIPTS_CHANNEL_ID;
 const ADMIN_ROLE_IDS = ['1100568786744119376', '1150412914696650786'];
 
 const sellerMap = new Map();
+const uploadedImagesMap = new Map();
+
 
 client.once('ready', async () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
@@ -189,7 +191,8 @@ client.on(Events.InteractionCreate, async interaction => {
     sellerMap.set(channelId, { ...(existing || {}), sellerId });
 
     await interaction.reply({
-      content: `✅ Seller ID received: **${sellerId}**\nPlease upload a picture of the pair to prove it's in-hand.`,
+      content: `✅ Seller ID received: **${sellerId}**\nPlease upload 6 **different** pictures of the pair to prove it's in-hand.`,
+      files: ['https://i.imgur.com/JKaeeNz.png'], // Replace with your actual collage image URL
       flags: 0
     });
   }
@@ -332,18 +335,37 @@ client.on(Events.MessageCreate, async message => {
     const data = sellerMap.get(message.channel.id);
     if (!data?.sellerId) return;
 
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('confirm_deal')
-        .setLabel('Confirm Deal')
-        .setStyle(ButtonStyle.Success)
-    );
+    const currentUploads = uploadedImagesMap.get(message.channel.id) || [];
 
-    await message.channel.send({
-      content: 'Admin: click below to confirm the deal.',
-      components: [row]
-    });
+    const imageUrls = [...message.attachments.values()]
+      .filter(att => att.contentType?.startsWith('image/'))
+      .map(att => att.url);
+
+    if (imageUrls.length > 0) {
+      currentUploads.push(...imageUrls);
+      uploadedImagesMap.set(message.channel.id, currentUploads);
+    }
+
+    const uploadedCount = currentUploads.length;
+    await message.channel.send(`📸 You've uploaded ${uploadedCount}/6 required pictures.`);
+
+    if (uploadedCount >= 6 && !data?.confirmSent) {
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('confirm_deal')
+          .setLabel('Confirm Deal')
+          .setStyle(ButtonStyle.Success)
+      );
+
+      await message.channel.send({
+        content: '✅ All 6 pictures received. Admin can now confirm the deal.',
+        components: [row]
+      });
+
+      sellerMap.set(message.channel.id, { ...data, confirmSent: true });
+    }
   }
+
 
   if (message.content === '!finish' && message.channel.name.toLowerCase().startsWith('ord-')) {
     const memberRoles = message.member.roles.cache.map(r => r.id);
