@@ -368,9 +368,8 @@ client.on(Events.MessageCreate, async message => {
       sellerMap.set(message.channel.id, { ...data, confirmSent: true });
     }
   }
-});
 
-
+  // ✅ This was outside before — move it inside
   if (message.content === '!finish' && message.channel.name.toLowerCase().startsWith('ord-')) {
     const memberRoles = message.member.roles.cache.map(r => r.id);
     const isAdmin = ADMIN_ROLE_IDS.some(id => memberRoles.includes(id));
@@ -406,6 +405,7 @@ client.on(Events.MessageCreate, async message => {
     }, 3600000); // 1 hour in milliseconds
   }
 });
+
 
 client.login(process.env.DISCORD_TOKEN);
 app.listen(PORT, () => {
