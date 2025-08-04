@@ -148,7 +148,6 @@ client.on(Events.InteractionCreate, async interaction => {
     if (sellerRecords.length === 0) {
       return interaction.reply({
         content: `❌ Seller ID **${sellerId}** not found. Please double-check it or create a new one if your ID is from before **02/06/2025**.`,
-        ephemeral: true
       });
     }
 
@@ -170,7 +169,6 @@ client.on(Events.InteractionCreate, async interaction => {
     await interaction.reply({
       content: `🔍 We found this Discord Username linked to Seller ID **${sellerId}**:\n**${discordUsername}**\n\nIs this you?`,
       components: [confirmRow],
-      ephemeral: true
     });
   } catch (err) {
     console.error('❌ Error verifying Seller ID:', err);
