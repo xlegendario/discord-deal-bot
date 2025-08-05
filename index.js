@@ -273,7 +273,7 @@ client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isButton() && interaction.customId === 'cancel_deal') {
     const channel = interaction.channel;
     const data = sellerMap.get(channel.id);
-    let recordId = data?.recordId;
+    let recordId = data?.orderRecordId;
 
     if (!recordId) {
       const orderNumber = channel.name.toUpperCase();
@@ -330,6 +330,11 @@ client.on(Events.InteractionCreate, async interaction => {
     const messages = await channel.messages.fetch({ limit: 50 });
 
     const sellerData = sellerMap.get(channel.id);
+
+    if (sellerData?.dealConfirmed) {
+      return interaction.editReply({ content: '⚠️ This deal has already been confirmed.' });
+    }
+
     if (!sellerData || !sellerData.sellerId || !sellerData.orderRecordId || !sellerData.sellerRecordId) {
       return interaction.reply({ content: '❌ Missing Seller ID or Order Claim ID.', flags: 0 });
     }
@@ -377,7 +382,26 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply({ content: '⚠️ This deal has already been confirmed before.', flags: 0 });
     }
 
+    // Generate the next OUT code
+    const latestRecord = await base('Inventory Units')
+      .select({
+        sort: [{ field: 'Item ID', direction: 'desc' }], // replace with your primary field's name
+        maxRecords: 1
+      })
+      .firstPage();
+
+    let nextNumber = 1;
+    if (latestRecord.length > 0) {
+      const latestCode = latestRecord[0].get('Item ID'); // replace with your primary field's name
+      const match = latestCode?.match(/OUT-(\d+)/);
+      if (match) {
+        nextNumber = parseInt(match[1], 10) + 1;
+      }
+    }
+    const newCode = `OUT-${String(nextNumber).padStart(6, '0')}`;
+
     await base('Inventory Units').create({
+      'Item ID': newCode, // your primary field
       'Product Name': productName,
       'SKU': sku,
       'Size': size,
@@ -385,15 +409,26 @@ client.on(Events.InteractionCreate, async interaction => {
       'Purchase Price': payout,
       'Shipping Deduction': 0,
       'Purchase Date': new Date().toISOString().split('T')[0],
-      'Seller ID': [sellerData.sellerRecordId], // ✅ seller record link
+      'Seller ID': [sellerData.sellerRecordId],
       'Ticket Number': orderNumber,
       'Type': 'Direct',
       'Verification Status': 'Verified',
       'Payment Status': 'To Pay',
       'Availability Status': 'Reserved',
       'Margin %': '10%',
-      'Unfulfilled Orders Log': [sellerData.orderRecordId] // ✅ order record link
+      'Unfulfilled Orders Log': [sellerData.orderRecordId]
     });
+
+    // ✅ Mark this deal as confirmed in memory so it can't be done again
+    sellerMap.set(channel.id, { ...sellerData, dealConfirmed: true });
+
+    // ✅ Try to remove the Confirm Deal button from the last message
+    const recentMessages = await channel.messages.fetch({ limit: 10 });
+    const buttonMessage = recentMessages.find(msg => msg.components.length > 0);
+
+    if (buttonMessage) {
+      await buttonMessage.edit({ components: [] });
+    }
 
 
     // ✅ Also check the "Outsourced?" checkbox in the linked record
