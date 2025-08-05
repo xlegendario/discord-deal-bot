@@ -272,9 +272,29 @@ client.on(Events.InteractionCreate, async interaction => {
 
   if (interaction.isButton() && interaction.customId === 'cancel_deal') {
       console.log(`🛑 Cancel Deal clicked in ${interaction.channel.name}`);
-
-      // 1. Acknowledge instantly so "Interaction Failed" won't happen
-      await interaction.deferReply({ ephemeral: true });
+  
+      try {
+          // Try to acknowledge interaction to prevent "Interaction Failed"
+          await interaction.deferReply({ flags: 64 }); // private reply
+      } catch (err) {
+          if (err.code === 10062) { // Unknown interaction = expired button
+              console.warn(`⚠️ Expired Cancel Deal button clicked in ${interaction.channel.name}`);
+              await interaction.channel.send({
+                  content: '⚠️ This Cancel Deal button has expired. Please use the new button below.',
+                  components: [
+                      new ActionRowBuilder().addComponents(
+                          new ButtonBuilder()
+                              .setCustomId('cancel_deal')
+                              .setLabel('Cancel Deal')
+                              .setStyle(ButtonStyle.Danger)
+                      )
+                  ]
+              });
+              return; // stop here, don’t run old logic
+          } else {
+              throw err; // different error, let it bubble up
+          }
+      }
 
       try {
           const channel = interaction.channel;
@@ -291,7 +311,7 @@ client.on(Events.InteractionCreate, async interaction => {
                   recordId = records[0].id;
               }
           }
-  
+
           if (!recordId) {
               return await interaction.editReply('❌ Record ID not found.');
           }
@@ -320,7 +340,7 @@ client.on(Events.InteractionCreate, async interaction => {
               });
           }
 
-          // ✅ Send transcript
+          // ✅ Create transcript
           const transcriptFileName = `transcript-${channel.name}.html`;
           const transcript = await createTranscript(channel, { limit: -1, returnBuffer: false, fileName: transcriptFileName });
           const transcriptsChannel = await client.channels.fetch(TRANSCRIPTS_CHANNEL_ID);
@@ -339,6 +359,7 @@ client.on(Events.InteractionCreate, async interaction => {
           await interaction.editReply('❌ Something went wrong while cancelling this deal.');
       }
   }
+
 
   if (interaction.isButton() && interaction.customId === 'confirm_deal') {
     const memberRoles = interaction.member.roles.cache.map(role => role.id);
