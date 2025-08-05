@@ -333,10 +333,10 @@ client.on(Events.InteractionCreate, async interaction => {
           if (invRecords.length > 0) {
               await base('Inventory Units').update(invRecords[0].id, {
                   "Verification Status": "Cancelled",
-                  "Selling Method": "",
-                  "Unfulfilled Orders Log": "",
-                  "Payment Status": "",
-                  "Availability Status": ""
+                  "Selling Method": null,           // clear single select
+                  "Unfulfilled Orders Log": [],     // clear linked record field
+                  "Payment Status": null,           // clear single select
+                  "Availability Status": null       // clear single select
               });
           }
 
