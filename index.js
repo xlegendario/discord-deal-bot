@@ -271,50 +271,72 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 
   if (interaction.isButton() && interaction.customId === 'cancel_deal') {
-    const channel = interaction.channel;
-    const data = sellerMap.get(channel.id);
-    let recordId = data?.orderRecordId;
+      const channel = interaction.channel;
+      const data = sellerMap.get(channel.id);
+      let recordId = data?.orderRecordId;
 
-    if (!recordId) {
-      const orderNumber = channel.name.toUpperCase();
-      const records = await base('Unfulfilled Orders Log').select({
-        filterByFormula: `{Order ID} = "${orderNumber}"`,
-        maxRecords: 1
-      }).firstPage();
-      if (records.length > 0) {
-        recordId = records[0].id;
+      if (!recordId) {
+          const orderNumber = channel.name.toUpperCase();
+          const records = await base('Unfulfilled Orders Log').select({
+              filterByFormula: `{Order ID} = "${orderNumber}"`,
+              maxRecords: 1
+          }).firstPage();
+          if (records.length > 0) {
+              recordId = records[0].id;
+          }
       }
-    }
 
-    if (!recordId) {
-      return interaction.reply({ content: '❌ Record ID not found.', flags: 0 });
-    }
+      if (!recordId) {
+        return interaction.reply({ content: '❌ Record ID not found.', flags: 0 });
+      }
 
-    await base('Unfulfilled Orders Log').update(recordId, {
-      "Fulfillment Status": "Outsource",
-      "Outsource Start Time": new Date().toISOString(),
-      "Deal Invitation URL": ""
-    });
-
-    const transcriptFileName = `transcript-${channel.name}.html`;
-    const transcript = await createTranscript(channel, {
-      limit: -1,
-      returnBuffer: false,
-      fileName: transcriptFileName
-    });
-
-    const transcriptsChannel = await client.channels.fetch(TRANSCRIPTS_CHANNEL_ID);
-    if (transcriptsChannel && transcriptsChannel.isTextBased()) {
-      await transcriptsChannel.send({
-        content: `🗒️ Transcript for cancelled deal channel **${channel.name}**`,
-        files: [transcript]
+      // ✅ Update Unfulfilled Orders Log
+      await base('Unfulfilled Orders Log').update(recordId, {
+          "Fulfillment Status": "Outsource",
+          "Outsource Start Time": new Date().toISOString(),
+          "Deal Invitation URL": ""
       });
-    }
 
+      // ✅ Find related Inventory Units record by Ticket Number
+      const orderNumber = channel.name.toUpperCase();
+      const invRecords = await base('Inventory Units').select({
+          filterByFormula: `{Ticket Number} = "${orderNumber}"`,
+          maxRecords: 1
+      }).firstPage();
 
-    await interaction.reply({ content: '✅ Deal has been finished or cancelled. Channel will be deleted shortly.', flags: 0 });
-    setTimeout(() => channel.delete().catch(console.error), 3000);
+      if (invRecords.length > 0) {
+          const invRecordId = invRecords[0].id;
+
+          // ✅ Update Inventory Units record
+          await base('Inventory Units').update(invRecordId, {
+              "Verification Status": "Cancelled",
+              "Selling Method": "",
+              "Unfulfilled Orders Log": "",
+              "Payment Status": "",
+              "Availability Status": ""
+          });
+      }
+
+      // ✅ Create transcript
+      const transcriptFileName = `transcript-${channel.name}.html`;
+      const transcript = await createTranscript(channel, {
+          limit: -1,
+          returnBuffer: false,
+          fileName: transcriptFileName
+      });
+
+      const transcriptsChannel = await client.channels.fetch(TRANSCRIPTS_CHANNEL_ID);
+      if (transcriptsChannel && transcriptsChannel.isTextBased()) {
+          await transcriptsChannel.send({
+              content: `🗒️ Transcript for cancelled deal channel **${channel.name}**`,
+              files: [transcript]
+          });
+      }
+
+      await interaction.reply({ content: '✅ Deal has been finished or cancelled. Channel will be deleted shortly.', flags: 0 });
+      setTimeout(() => channel.delete().catch(console.error), 3000);
   }
+
 
   if (interaction.isButton() && interaction.customId === 'confirm_deal') {
     const memberRoles = interaction.member.roles.cache.map(role => role.id);
@@ -417,6 +439,7 @@ client.on(Events.InteractionCreate, async interaction => {
       'Availability Status': 'Reserved',
       'Margin %': '10%',
       'Payment Note': payout.toFixed(2).replace('.', ','),
+      'Selling Method': 'Plug & Play',
       'Unfulfilled Orders Log': [sellerData.orderRecordId]
     });
 
