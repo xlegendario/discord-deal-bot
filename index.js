@@ -115,7 +115,7 @@ app.post('/claim-deal', async (req, res) => {
     );
 
     await channel.send({ embeds: [embed], components: [row] });
-    sellerMap.set(channel.id, { sellerId: null, recordId });
+    sellerMap.set(channel.id, { sellerId: null, orderRecordId: recordId });
 
     await base('Unfulfilled Orders Log').update(recordId, {
       "Deal Invitation URL": invite.url,
@@ -215,9 +215,10 @@ client.on(Events.InteractionCreate, async interaction => {
     sellerMap.set(channelId, {
       ...(sellerMap.get(channelId) || {}),
       sellerId,
-      recordId: sellerRecord.id,
+      sellerRecordId: sellerRecord.id, // keep seller record separately
       confirmed: false
     });
+
 
     const confirmRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('confirm_seller').setLabel('✅ Yes, that is me').setStyle(ButtonStyle.Success),
@@ -329,9 +330,10 @@ client.on(Events.InteractionCreate, async interaction => {
     const messages = await channel.messages.fetch({ limit: 50 });
 
     const sellerData = sellerMap.get(channel.id);
-    if (!sellerData || !sellerData.sellerId || !sellerData.recordId) {
-      return interaction.reply({ content: '❌ Missing Seller ID or Claim ID.', flags: 0 });
+    if (!sellerData || !sellerData.sellerId || !sellerData.orderRecordId || !sellerData.sellerRecordId) {
+      return interaction.reply({ content: '❌ Missing Seller ID or Order Claim ID.', flags: 0 });
     }
+
 
     const imageMsg = messages.find(m =>
       m.attachments.size > 0 && [...m.attachments.values()].some(att => att.contentType?.startsWith('image/'))
@@ -355,7 +357,7 @@ client.on(Events.InteractionCreate, async interaction => {
     const brand = getValue('**Brand:**');
     const payout = parseFloat(getValue('**Payout:**')?.replace('€', '') || 0);
     const orderNumber = getValue('**Order:**');
-    const orderRecord = await base('Unfulfilled Orders Log').find(sellerData.recordId);
+    const orderRecord = await base('Unfulfilled Orders Log').find(sellerData.orderRecordId);
     const productName = orderRecord.get('Product Name');
 
     const sellerRecords = await base('Sellers Database')
@@ -383,20 +385,22 @@ client.on(Events.InteractionCreate, async interaction => {
       'Purchase Price': payout,
       'Shipping Deduction': 0,
       'Purchase Date': new Date().toISOString().split('T')[0],
-      'Seller ID': [sellerRecords[0].id],
+      'Seller ID': [sellerData.sellerRecordId], // ✅ seller record link
       'Ticket Number': orderNumber,
       'Type': 'Direct',
       'Verification Status': 'Verified',
       'Payment Status': 'To Pay',
       'Availability Status': 'Reserved',
       'Margin %': '10%',
-      'Unfulfilled Orders Log': [sellerData.recordId]
+      'Unfulfilled Orders Log': [sellerData.orderRecordId] // ✅ order record link
     });
 
+
     // ✅ Also check the "Outsourced?" checkbox in the linked record
-    await base('Unfulfilled Orders Log').update(sellerData.recordId, {
+    await base('Unfulfilled Orders Log').update(sellerData.orderRecordId, {
       'Outsourced?': true
     });
+
 
     await interaction.editReply({ content: '✅ Deal processed!' });
   }
