@@ -39,21 +39,31 @@ client.once('ready', async () => {
 
   const channel = await client.channels.fetch(VERIFY_CHANNEL_ID);
   if (channel && channel.isTextBased()) {
-    const embed = new EmbedBuilder()
-      .setTitle('🔐 Verify Deal Access')
-      .setDescription('Click the button below and enter your **Claim ID** to unlock access to your deal channel.')
-      .setColor(0xFFED00);
-
-    const button = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('verify_access')
-        .setLabel('Verify Deal Access')
-        .setStyle(ButtonStyle.Primary)
+    // Check last 5 messages to see if it's already posted
+    const messages = await channel.messages.fetch({ limit: 5 });
+    const alreadyExists = messages.some(m =>
+      m.embeds.length > 0 &&
+      m.embeds[0].title === '🔐 Verify Deal Access'
     );
 
-    await channel.send({ embeds: [embed], components: [button] });
+    if (!alreadyExists) {
+      const embed = new EmbedBuilder()
+        .setTitle('🔐 Verify Deal Access')
+        .setDescription('Click the button below and enter your **Claim ID** to unlock access to your deal channel.')
+        .setColor(0xFFED00);
+
+      const button = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('verify_access')
+          .setLabel('Verify Deal Access')
+          .setStyle(ButtonStyle.Primary)
+      );
+
+      await channel.send({ embeds: [embed], components: [button] });
+    }
   }
 });
+
 
 app.post('/claim-deal', async (req, res) => {
   const { orderNumber, productName, sku, skuSoft, size, brand, payout, recordId } = req.body;
@@ -309,8 +319,11 @@ client.on(Events.InteractionCreate, async interaction => {
     const memberRoles = interaction.member.roles.cache.map(role => role.id);
     const isAdmin = ADMIN_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
     if (!isAdmin) {
-      return interaction.reply({ content: '❌ You are not authorized to confirm the deal.', flags: 0 });
+      return interaction.reply({ content: '❌ You are not authorized to confirm the deal.', ephemeral: false });
     }
+
+    await interaction.deferReply({ ephemeral: false }); // 👈 Acknowledge immediately
+
 
     const channel = interaction.channel;
     const messages = await channel.messages.fetch({ limit: 50 });
@@ -385,7 +398,7 @@ client.on(Events.InteractionCreate, async interaction => {
       'Outsourced?': true
     });
 
-    await interaction.reply({ content: '✅ Deal processed!', flags: 0 });
+    await interaction.editReply({ content: '✅ Deal processed!' });
   }
 });
 
