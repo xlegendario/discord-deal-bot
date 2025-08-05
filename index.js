@@ -134,11 +134,59 @@ client.on(Events.InteractionCreate, async interaction => {
     modal.addComponents(new ActionRowBuilder().addComponents(input));
     await interaction.showModal(modal);
   }
+  
+  if (interaction.isModalSubmit() && interaction.customId === 'record_id_verify') {
+    const recordId = interaction.fields.getTextInputValue('record_id').trim();
 
+    try {
+      // 1. Fetch the record from Airtable
+      const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
+      if (!orderRecord) {
+        return interaction.reply({
+          content: `❌ No deal found for Claim ID **${recordId}**.`,
+          ephemeral: true
+        });
+      }
+
+      // 2. Find the matching Discord channel
+      const orderNumber = orderRecord.get('Order ID');
+      const guild = await client.guilds.fetch(process.env.GUILD_ID);
+      const dealChannel = guild.channels.cache.find(
+        ch => ch.name.toLowerCase() === orderNumber.toLowerCase()
+      );
+
+      if (!dealChannel) {
+        return interaction.reply({
+          content: `❌ No channel found for order **${orderNumber}**.`,
+          ephemeral: true
+        });
+      }
+
+      // 3. Give the user access to the channel
+      await dealChannel.permissionOverwrites.edit(interaction.user.id, {
+        ViewChannel: true,
+        SendMessages: true
+      });
+
+      // 4. Confirm success
+      await interaction.reply({
+        content: `✅ Access granted! You can now view <#${dealChannel.id}>.`,
+        ephemeral: true
+      });
+
+    } catch (err) {
+      console.error('❌ Error verifying deal access:', err);
+      await interaction.reply({
+        content: '❌ Something went wrong while verifying your access. Please try again later.',
+        ephemeral: true
+      });
+    }
+  }
+  
   if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
-  const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
-  const sellerId = `SE-${sellerIdRaw.padStart(5, '0')}`;
-  const channelId = interaction.channel.id;
+    const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
+    const sellerId = `SE-${sellerIdRaw.padStart(5, '0')}`;
+    const channelId = interaction.channel.id;
 
   try {
     const sellerRecords = await base('Sellers Database')
