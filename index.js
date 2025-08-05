@@ -416,6 +416,7 @@ client.on(Events.InteractionCreate, async interaction => {
       'Payment Status': 'To Pay',
       'Availability Status': 'Reserved',
       'Margin %': '10%',
+      'Payment Note': payout.toFixed(2).replace('.', ',')
       'Unfulfilled Orders Log': [sellerData.orderRecordId]
     });
 
