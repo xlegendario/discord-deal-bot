@@ -323,8 +323,8 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply({ content: '❌ You are not authorized to confirm the deal.', ephemeral: false });
     }
 
-    await interaction.deferReply({ ephemeral: false }); // 👈 Acknowledge immediately
-
+    // ✅ Acknowledge immediately
+    await interaction.deferReply({ ephemeral: false });
 
     const channel = interaction.channel;
     const messages = await channel.messages.fetch({ limit: 50 });
@@ -336,22 +336,21 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (!sellerData || !sellerData.sellerId || !sellerData.orderRecordId || !sellerData.sellerRecordId) {
-      return interaction.reply({ content: '❌ Missing Seller ID or Order Claim ID.', flags: 0 });
+      return interaction.editReply({ content: '❌ Missing Seller ID or Order Claim ID.' });
     }
-
 
     const imageMsg = messages.find(m =>
       m.attachments.size > 0 && [...m.attachments.values()].some(att => att.contentType?.startsWith('image/'))
     );
 
     if (!imageMsg) {
-      return interaction.reply({ content: '❌ No image found in recent messages.', flags: 0 });
+      return interaction.editReply({ content: '❌ No image found in recent messages.' });
     }
 
     const dealMsg = messages.find(m => m.embeds.length > 0);
     const embed = dealMsg?.embeds?.[0];
     if (!embed || !embed.description) {
-      return interaction.reply({ content: '❌ Missing deal embed.', flags: 0 });
+      return interaction.editReply({ content: '❌ Missing deal embed.' });
     }
 
     const lines = embed.description.split('\n');
@@ -370,7 +369,7 @@ client.on(Events.InteractionCreate, async interaction => {
       .firstPage();
 
     if (!sellerRecords.length) {
-      return interaction.reply({ content: '❌ Seller ID not found in our system.', flags: 0 });
+      return interaction.editReply({ content: '❌ Seller ID not found in our system.' });
     }
 
     const duplicate = await base('Inventory Units').select({
@@ -379,20 +378,20 @@ client.on(Events.InteractionCreate, async interaction => {
     }).firstPage();
 
     if (duplicate.length > 0) {
-      return interaction.reply({ content: '⚠️ This deal has already been confirmed before.', flags: 0 });
+      return interaction.editReply({ content: '⚠️ This deal has already been confirmed before.' });
     }
 
-    // Generate the next OUT code
+    // ✅ Generate the next OUT code
     const latestRecord = await base('Inventory Units')
       .select({
-        sort: [{ field: 'Item ID', direction: 'desc' }], // replace with your primary field's name
+        sort: [{ field: 'Item ID', direction: 'desc' }],
         maxRecords: 1
       })
       .firstPage();
 
     let nextNumber = 1;
     if (latestRecord.length > 0) {
-      const latestCode = latestRecord[0].get('Item ID'); // replace with your primary field's name
+      const latestCode = latestRecord[0].get('Item ID');
       const match = latestCode?.match(/OUT-(\d+)/);
       if (match) {
         nextNumber = parseInt(match[1], 10) + 1;
@@ -400,8 +399,9 @@ client.on(Events.InteractionCreate, async interaction => {
     }
     const newCode = `OUT-${String(nextNumber).padStart(6, '0')}`;
 
+    // ✅ Create the record in Inventory Units
     await base('Inventory Units').create({
-      'Item ID': newCode, // your primary field
+      'Item ID': newCode,
       'Product Name': productName,
       'SKU': sku,
       'Size': size,
@@ -420,24 +420,22 @@ client.on(Events.InteractionCreate, async interaction => {
       'Unfulfilled Orders Log': [sellerData.orderRecordId]
     });
 
-    // ✅ Mark this deal as confirmed in memory so it can't be done again
+    // ✅ Mark deal as confirmed so it can't happen again
     sellerMap.set(channel.id, { ...sellerData, dealConfirmed: true });
 
-    // ✅ Try to remove the Confirm Deal button from the last message
+    // ✅ Remove the Confirm Deal button from last message
     const recentMessages = await channel.messages.fetch({ limit: 10 });
     const buttonMessage = recentMessages.find(msg => msg.components.length > 0);
-
     if (buttonMessage) {
       await buttonMessage.edit({ components: [] });
     }
 
-
-    // ✅ Also check the "Outsourced?" checkbox in the linked record
+    // ✅ Mark Outsourced in the linked record
     await base('Unfulfilled Orders Log').update(sellerData.orderRecordId, {
       'Outsourced?': true
     });
 
-
+    // ✅ Final confirmation message
     await interaction.editReply({ content: '✅ Deal processed!' });
   }
 });
