@@ -466,7 +466,7 @@ client.on(Events.InteractionCreate, async interaction => {
     await interaction.editReply({
       content: `✅ Deal processed!\n\n📦 The shipping label will be sent shortly.\n\n📬 Please prepare the package and ensure it is packed in a clean, unbranded box with no unnecessary stickers or markings.\n\n❌ Do not include anything inside the box, as this is not a standard deal.\n\n📸 Please pack it as professionally as possible. If you're unsure, feel free to take a photo of the package and share it here before shipping.`
     });
-
+  }
 
 client.on(Events.MessageCreate, async message => {
   if (
