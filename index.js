@@ -426,27 +426,8 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.editReply({ content: '⚠️ This deal has already been confirmed before.' });
     }
 
-    // ✅ Generate the next OUT code
-    const latestRecord = await base('Inventory Units')
-      .select({
-        sort: [{ field: 'Item ID', direction: 'desc' }],
-        maxRecords: 1
-      })
-      .firstPage();
-
-    let nextNumber = 1;
-    if (latestRecord.length > 0) {
-      const latestCode = latestRecord[0].get('Item ID');
-      const match = latestCode?.match(/OUT-(\d+)/);
-      if (match) {
-        nextNumber = parseInt(match[1], 10) + 1;
-      }
-    }
-    const newCode = `OUT-${String(nextNumber).padStart(6, '0')}`;
-
     // ✅ Create the record in Inventory Units
     await base('Inventory Units').create({
-      'Item ID': newCode,
       'Product Name': productName,
       'SKU': sku,
       'Size': size,
@@ -482,9 +463,10 @@ client.on(Events.InteractionCreate, async interaction => {
     });
 
     // ✅ Final confirmation message
-    await interaction.editReply({ content: '✅ Deal processed!' });
-  }
-});
+    await interaction.editReply({
+      content: `✅ Deal processed!\n\n📦 The shipping label will be sent shortly.\n\n📬 Please prepare the package and ensure it is packed in a clean, unbranded box with no unnecessary stickers or markings.\n\n❌ Do not include anything inside the box, as this is not a standard deal.\n\n📸 Please pack it as professionally as possible. If you're unsure, feel free to take a photo of the package and share it here before shipping.`
+    });
+
 
 client.on(Events.MessageCreate, async message => {
   if (
@@ -507,9 +489,10 @@ client.on(Events.MessageCreate, async message => {
 
     const uploadedCount = currentUploads.length;
 
-    if (!message.author.bot) {
+    if (!message.author.bot && uploadedCount < 6) {
       await message.channel.send(`📸 You've uploaded ${uploadedCount}/6 required pictures.`);
     }
+
 
     if (uploadedCount >= 6 && !data?.confirmSent) {
       const row = new ActionRowBuilder().addComponents(
