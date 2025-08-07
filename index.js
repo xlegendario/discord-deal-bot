@@ -368,14 +368,12 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply({ content: '❌ You are not authorized to confirm the deal.', ephemeral: false });
     }
 
-    // ✅ Acknowledge immediately
     await interaction.deferReply({ ephemeral: false });
 
     const channel = interaction.channel;
     const messages = await channel.messages.fetch({ limit: 50 });
 
     const sellerData = sellerMap.get(channel.id);
-
     if (sellerData?.dealConfirmed) {
       return interaction.editReply({ content: '⚠️ This deal has already been confirmed.' });
     }
@@ -426,7 +424,6 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.editReply({ content: '⚠️ This deal has already been confirmed before.' });
     }
 
-    // ✅ Create the record in Inventory Units
     await base('Inventory Units').create({
       'Product Name': productName,
       'SKU': sku,
@@ -447,26 +444,23 @@ client.on(Events.InteractionCreate, async interaction => {
       'Unfulfilled Orders Log': [sellerData.orderRecordId]
     });
 
-    // ✅ Mark deal as confirmed so it can't happen again
     sellerMap.set(channel.id, { ...sellerData, dealConfirmed: true });
 
-    // ✅ Remove the Confirm Deal button from last message
     const recentMessages = await channel.messages.fetch({ limit: 10 });
     const buttonMessage = recentMessages.find(msg => msg.components.length > 0);
     if (buttonMessage) {
       await buttonMessage.edit({ components: [] });
     }
 
-    // ✅ Mark Outsourced in the linked record
     await base('Unfulfilled Orders Log').update(sellerData.orderRecordId, {
       'Outsourced?': true
     });
 
-    // ✅ Final confirmation message
     await interaction.editReply({
       content: `✅ Deal processed!\n\n📦 The shipping label will be sent shortly.\n\n📬 Please prepare the package and ensure it is packed in a clean, unbranded box with no unnecessary stickers or markings.\n\n❌ Do not include anything inside the box, as this is not a standard deal.\n\n📸 Please pack it as professionally as possible. If you're unsure, feel free to take a photo of the package and share it here before shipping.`
     });
   }
+});
 
 client.on(Events.MessageCreate, async message => {
   if (
