@@ -435,6 +435,7 @@ client.on(Events.InteractionCreate, async interaction => {
       'Seller ID': [sellerData.sellerRecordId],
       'Ticket Number': orderNumber,
       'Type': 'Direct',
+      'Source': 'Outsourced',
       'Verification Status': 'Verified',
       'Payment Status': 'To Pay',
       'Availability Status': 'Reserved',
