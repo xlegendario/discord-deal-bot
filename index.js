@@ -28,7 +28,7 @@ const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process
 const PORT = process.env.PORT || 3000;
 const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
 const TRANSCRIPTS_CHANNEL_ID = process.env.TRANSCRIPTS_CHANNEL_ID;
-const ADMIN_ROLE_IDS = ['1100568786744119376', '1150412914696650786'];
+const ADMIN_ROLE_IDS = ['942779423449579530', '1060615571118510191'];
 
 const sellerMap = new Map();
 const uploadedImagesMap = new Map();
