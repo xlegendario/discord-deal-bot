@@ -411,7 +411,8 @@ client.on(Events.InteractionCreate, async interaction => {
     const brand = getValue('**Brand:**');
     const payout = parseFloat(getValue('**Payout:**')?.replace('€', '') || 0);
     // --- Adjust payout if user does NOT have trusted role ---
-    let finalPayout = payout;
+    let finalPayout = payout;   // amount you actually transfer
+    let shippingDeduction = 0;  // new variable
     let trustNote = '';
 
     try {
@@ -420,13 +421,15 @@ client.on(Events.InteractionCreate, async interaction => {
         const member = await interaction.guild.members.fetch(sellerDiscordId);
         const isTrusted = member.roles.cache.has(TRUSTED_SELLERS_ROLE_ID);
         if (!isTrusted) {
-          finalPayout = Math.max(0, payout - 10); // deduct €10 if not trusted
-          trustNote = '\n\n⚠️ Because you are not a Trusted Seller yet, we have to deduct €10 from the payout for the extra label and additional handling required by our warehouse.';
+          finalPayout = Math.max(0, payout - 10); 
+          shippingDeduction = 10;  // <--- set the deduction
+          trustNote = '\n\n⚠️ Because you are not a Trusted Seller yet, we have to deduct €10 from the payout for the extra label and handling.';
         }
       }
     } catch (err) {
       console.warn('Could not check trusted role:', err);
     }
+
 
     const orderNumber = getValue('**Order:**');
     const orderRecord = await base('Unfulfilled Orders Log').find(sellerData.orderRecordId);
