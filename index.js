@@ -29,6 +29,8 @@ const PORT = process.env.PORT || 3000;
 const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
 const TRANSCRIPTS_CHANNEL_ID = process.env.TRANSCRIPTS_CHANNEL_ID;
 const ADMIN_ROLE_IDS = ['942779423449579530', '1060615571118510191'];
+const TRUSTED_SELLERS_ROLE_ID = process.env.TRUSTED_SELLERS_ROLE_ID; // put your trusted sellers role ID in .env
+
 
 const sellerMap = new Map();
 const uploadedImagesMap = new Map();
@@ -177,6 +179,9 @@ client.on(Events.InteractionCreate, async interaction => {
         ViewChannel: true,
         SendMessages: true
       });
+      // Store the seller's Discord ID for this channel
+      const existing = sellerMap.get(dealChannel.id) || {};
+      sellerMap.set(dealChannel.id, { ...existing, sellerDiscordId: interaction.user.id });
 
       // 4. Confirm success
       await interaction.reply({
@@ -216,8 +221,10 @@ client.on(Events.InteractionCreate, async interaction => {
       ...(sellerMap.get(channelId) || {}),
       sellerId,
       sellerRecordId: sellerRecord.id, // keep seller record separately
-      confirmed: false
+      confirmed: false,
+      sellerDiscordId: interaction.user.id // <-- store the Discord ID
     });
+
 
 
     const confirmRow = new ActionRowBuilder().addComponents(
@@ -403,6 +410,24 @@ client.on(Events.InteractionCreate, async interaction => {
     const size = getValue('**Size:**');
     const brand = getValue('**Brand:**');
     const payout = parseFloat(getValue('**Payout:**')?.replace('€', '') || 0);
+    // --- Adjust payout if user does NOT have trusted role ---
+    let finalPayout = payout;
+    let trustNote = '';
+
+    try {
+      const sellerDiscordId = sellerData?.sellerDiscordId;
+      if (sellerDiscordId) {
+        const member = await interaction.guild.members.fetch(sellerDiscordId);
+        const isTrusted = member.roles.cache.has(TRUSTED_SELLERS_ROLE_ID);
+        if (!isTrusted) {
+          finalPayout = Math.max(0, payout - 10); // deduct €10 if not trusted
+          trustNote = ' (includes €10 non-trusted deduction)';
+        }
+      }
+    } catch (err) {
+      console.warn('Could not check trusted role:', err);
+    }
+
     const orderNumber = getValue('**Order:**');
     const orderRecord = await base('Unfulfilled Orders Log').find(sellerData.orderRecordId);
     const productName = orderRecord.get('Product Name');
@@ -429,7 +454,7 @@ client.on(Events.InteractionCreate, async interaction => {
       'SKU': sku,
       'Size': size,
       'Brand': brand,
-      'Purchase Price': payout,
+      'Purchase Price': finalPayout,
       'Shipping Deduction': 0,
       'Purchase Date': new Date().toISOString().split('T')[0],
       'Seller ID': [sellerData.sellerRecordId],
@@ -440,7 +465,7 @@ client.on(Events.InteractionCreate, async interaction => {
       'Payment Status': 'To Pay',
       'Availability Status': 'Reserved',
       'Margin %': '10%',
-      'Payment Note': payout.toFixed(2).replace('.', ','),
+      'Payment Note': finalPayout.toFixed(2).replace('.', ','),
       'Selling Method': 'Plug & Play',
       'Unfulfilled Orders Log': [sellerData.orderRecordId]
     });
@@ -458,7 +483,13 @@ client.on(Events.InteractionCreate, async interaction => {
     });
 
     await interaction.editReply({
-      content: `✅ Deal processed!\n\n📦 The shipping label will be sent shortly.\n\n📬 Please prepare the package and ensure it is packed in a clean, unbranded box with no unnecessary stickers or markings.\n\n❌ Do not include anything inside the box, as this is not a standard deal.\n\n📸 Please pack it as professionally as possible. If you're unsure, feel free to take a photo of the package and share it here before shipping.`
+      content:
+        `✅ Deal processed!\n\n` +
+        `💶 Final payout: €${finalPayout.toFixed(2)}${trustNote}\n\n` +
+        `📦 The shipping label will be sent shortly.\n\n` +
+        `📬 Please prepare the package and ensure it is packed in a clean, unbranded box with no unnecessary stickers or markings.\n\n` +
+        `❌ Do not include anything inside the box, as this is not a standard deal.\n\n` +
+        `📸 Please pack it as professionally as possible. If you're unsure, feel free to take a photo of the package and share it here before shipping.`
     });
   }
 });
