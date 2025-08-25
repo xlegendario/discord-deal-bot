@@ -423,7 +423,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!isTrusted) {
           finalPayout = Math.max(0, payout - 10); 
           shippingDeduction = 10;  // <--- set the deduction
-          trustNote = '\n\n⚠️ Because you are not a Trusted Seller yet, we have to deduct €10 from the payout for the extra label and handling.';
+          trustNote = '\n\n⚠️ Because you are not a Trusted Seller yet, we had to deduct €10 from the payout for the extra label and handling.';
         }
       }
     } catch (err) {
