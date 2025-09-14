@@ -457,6 +457,7 @@ client.on(Events.InteractionCreate, async interaction => {
       'SKU': sku,
       'Size': size,
       'Brand': brand,
+      'VAT Type':'Margin',
       'Purchase Price': payout,
       'Shipping Deduction': shippingDeduction,
       'Purchase Date': new Date().toISOString().split('T')[0],
