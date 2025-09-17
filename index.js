@@ -12,7 +12,8 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  Events
+  Events,
+  MessageFlags
 } = require('discord.js');
 const Airtable = require('airtable');
 const { createTranscript } = require('discord-html-transcripts');
@@ -187,7 +188,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (!orderRecord) {
         return interaction.reply({
           content: `❌ No deal found for Claim ID **${recordId}**.`,
-          ephemeral: true
+          flags: MessageFlags.Ephemeral
         });
       }
 
@@ -212,7 +213,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (!dealChannel) {
         return interaction.reply({
           content: `❌ No channel found for order **${orderNumber}**.`,
-          ephemeral: true
+          flags: MessageFlags.Ephemeral
         });
       }
 
@@ -230,14 +231,14 @@ client.on(Events.InteractionCreate, async interaction => {
       // 4. Confirm success
       await interaction.reply({
         content: `✅ Access granted! You can now view <#${dealChannel.id}>.`,
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       });
 
     } catch (err) {
       console.error('❌ Error verifying deal access:', err);
       await interaction.reply({
         content: '❌ Something went wrong while verifying your access. Please try again later.',
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       });
     }
   }
@@ -299,7 +300,7 @@ client.on(Events.InteractionCreate, async interaction => {
     });
   } catch (err) {
     console.error('❌ Error verifying Seller ID:', err);
-    return interaction.reply({ content: '❌ An error occurred while verifying the Seller ID.', ephemeral: true });
+    return interaction.reply({ content: '❌ An error occurred while verifying the Seller ID.', flags: MessageFlags.Ephemeral });
   }
 }
   if (interaction.isButton() && ['confirm_seller', 'reject_seller'].includes(interaction.customId)) {
@@ -380,7 +381,7 @@ client.on(Events.InteractionCreate, async interaction => {
   
       try {
           // Try to acknowledge interaction to prevent "Interaction Failed"
-          await interaction.deferReply({ flags: 64 }); // private reply
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral }); // private reply
       } catch (err) {
           if (err.code === 10062) { // Unknown interaction = expired button
               console.warn(`⚠️ Expired Cancel Deal button clicked in ${interaction.channel.name}`);
@@ -466,14 +467,35 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 
 
-  if (interaction.isButton() && interaction.customId === 'confirm_deal') {
+    if (interaction.isButton() && interaction.customId === 'confirm_deal') {
     const memberRoles = interaction.member.roles.cache.map(role => role.id);
     const isAdmin = ADMIN_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
     if (!isAdmin) {
-      return interaction.reply({ content: '❌ You are not authorized to confirm the deal.', ephemeral: false });
+      // no 'ephemeral: false' – just reply normally
+      return interaction.reply({ content: '❌ You are not authorized to confirm the deal.' });
     }
 
-    await interaction.deferReply({ ephemeral: false });
+    // Acknowledge ASAP; catch expired button (10062)
+    try {
+      // don't pass 'ephemeral' here; it's deprecated
+      await interaction.deferReply(); 
+    } catch (err) {
+      if (err.code === 10062) { // Unknown interaction = expired click
+        await interaction.channel.send({
+          content: '⚠️ This Confirm Deal button has expired. Please use the new button below.',
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId('confirm_deal')
+                .setLabel('Confirm Deal')
+                .setStyle(ButtonStyle.Success)
+            )
+          ]
+        });
+        return;
+      }
+      throw err;
+    }
 
     const channel = interaction.channel;
     const messages = await channel.messages.fetch({ limit: 50 });
@@ -494,8 +516,7 @@ client.on(Events.InteractionCreate, async interaction => {
           sellerDiscordId: rec.get('Seller Discord ID'),
           dealEmbedId: rec.get('Deal Embed Message ID')
         };
-
-        sellerMap.set(channel.id, sellerData); // cache again
+        sellerMap.set(channel.id, sellerData);
       }
     }
 
@@ -506,7 +527,6 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!sellerData || !sellerData.orderRecordId || !sellerData.sellerRecordId) {
       return interaction.editReply({ content: '❌ Missing linked Seller or Order Claim ID.' });
     }
-
 
     const imageMsg = messages.find(m =>
       m.attachments.size > 0 && [...m.attachments.values()].some(att => att.contentType?.startsWith('image/'))
@@ -527,7 +547,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // fallback: search deeper (paginate up to 500 msgs)
     if (!embed) {
-      const msgs = await fetchUpTo(channel, 500); // 👈 scan up to 500
+      const msgs = await fetchUpTo(channel, 500);
       const m = msgs.find(msg =>
         msg.author.id === client.user.id &&
         Array.isArray(msg.embeds) &&
@@ -535,7 +555,6 @@ client.on(Events.InteractionCreate, async interaction => {
       );
       embed = m?.embeds?.find(e => e?.title === '💸 Deal Claimed');
     }
-
 
     if (!embed?.description) {
       return interaction.editReply({ content: '❌ Missing deal embed.' });
@@ -548,9 +567,10 @@ client.on(Events.InteractionCreate, async interaction => {
     const size = getValue('**Size:**');
     const brand = getValue('**Brand:**');
     const payout = parseFloat(getValue('**Payout:**')?.replace('€', '') || 0);
+
     // --- Adjust payout if user does NOT have trusted role ---
-    let finalPayout = payout;   // amount you actually transfer
-    let shippingDeduction = 0;  // new variable
+    let finalPayout = payout;
+    let shippingDeduction = 0;
     let trustNote = '';
 
     try {
@@ -568,11 +588,9 @@ client.on(Events.InteractionCreate, async interaction => {
           trustNote = '\n\n⚠️ Because you are not a Trusted Seller yet, we had to deduct €10 from the payout for the extra label and handling.';
         }
       }
-
     } catch (err) {
       console.warn('Could not check trusted role:', err);
     }
-
 
     const orderNumber = getValue('**Order:**');
     const orderRecord = await base('Unfulfilled Orders Log').find(sellerData.orderRecordId);
@@ -581,13 +599,10 @@ client.on(Events.InteractionCreate, async interaction => {
     let sellerRecord;
     try {
       sellerRecord = await base('Sellers Database').find(sellerData.sellerRecordId);
-    } catch (e) {
-      // not found
-    }
+    } catch (e) {}
     if (!sellerRecord) {
       return interaction.editReply({ content: '❌ Linked Seller not found in our system.' });
     }
-
 
     const duplicate = await base('Inventory Units').select({
       filterByFormula: `{Ticket Number} = "${orderNumber}"`,
@@ -642,6 +657,7 @@ client.on(Events.InteractionCreate, async interaction => {
         `📸 Please pack it as professionally as possible. If you're unsure, feel free to take a photo of the package and share it here before shipping.`
     });
   }
+
 });
 
 client.on(Events.MessageCreate, async message => {
