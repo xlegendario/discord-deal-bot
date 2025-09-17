@@ -21,7 +21,12 @@ const app = express();
 app.use(express.json());
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers // <- REQUIRED for member.roles.fetch/cache
+  ]
 });
 
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
@@ -34,6 +39,26 @@ const TRUSTED_SELLERS_ROLE_ID = process.env.TRUSTED_SELLERS_ROLE_ID; // put your
 
 const sellerMap = new Map();
 const uploadedImagesMap = new Map();
+
+async function fetchUpTo(channel, max = 500) {
+  const collected = [];
+  let beforeId = undefined;
+
+  while (collected.length < max) {
+    const batchSize = Math.min(100, max - collected.length);
+    const batch = await channel.messages.fetch({ limit: batchSize, ...(beforeId ? { before: beforeId } : {}) });
+    if (batch.size === 0) break;
+
+    // Push in chronological order (newest → oldest)
+    for (const m of batch.values()) collected.push(m);
+
+    // Prepare for next page (oldest id in this batch)
+    const oldest = batch.last();
+    beforeId = oldest?.id;
+    if (!beforeId) break;
+  }
+  return collected;
+}
 
 
 client.once('ready', async () => {
@@ -116,12 +141,18 @@ app.post('/claim-deal', async (req, res) => {
       new ButtonBuilder().setCustomId('cancel_deal').setLabel('Cancel Deal').setStyle(ButtonStyle.Danger)
     );
 
-    await channel.send({ embeds: [embed], components: [row] });
-    sellerMap.set(channel.id, { sellerId: null, orderRecordId: recordId });
+    const dealMsg = await channel.send({ embeds: [embed], components: [row] });
+    sellerMap.set(channel.id, {
+      orderRecordId: recordId,
+      dealEmbedId: dealMsg.id,           // <-- store the message ID
+    });
 
+    // (optional but recommended: persist to Airtable so it survives restarts)
     await base('Unfulfilled Orders Log').update(recordId, {
       "Deal Invitation URL": invite.url,
-      "Fulfillment Status": "Claim Processing"
+      "Fulfillment Status": "Claim Processing",
+      "Deal Channel ID": channel.id,          // add these fields in Airtable
+      "Deal Embed Message ID": dealMsg.id
     });
 
     res.redirect(302, `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`);
@@ -163,9 +194,20 @@ client.on(Events.InteractionCreate, async interaction => {
       // 2. Find the matching Discord channel
       const orderNumber = orderRecord.get('Order ID');
       const guild = await client.guilds.fetch(process.env.GUILD_ID);
-      const dealChannel = guild.channels.cache.find(
+      let dealChannel = guild.channels.cache.find(
         ch => ch.name.toLowerCase() === orderNumber.toLowerCase()
       );
+
+      if (!dealChannel) {
+        const dealChannelId = orderRecord.get('Deal Channel ID');
+        if (dealChannelId) {
+          try {
+            dealChannel = await guild.channels.fetch(dealChannelId);
+          } catch (e) {
+            // ignore fetch error, will fall through to the error reply below
+          }
+        }
+      }
 
       if (!dealChannel) {
         return interaction.reply({
@@ -177,8 +219,10 @@ client.on(Events.InteractionCreate, async interaction => {
       // 3. Give the user access to the channel
       await dealChannel.permissionOverwrites.edit(interaction.user.id, {
         ViewChannel: true,
-        SendMessages: true
+        SendMessages: true,
+        AttachFiles: true // <- ensure they can post photos
       });
+
       // Store the seller's Discord ID for this channel
       const existing = sellerMap.get(dealChannel.id) || {};
       sellerMap.set(dealChannel.id, { ...existing, sellerDiscordId: interaction.user.id });
@@ -225,6 +269,23 @@ client.on(Events.InteractionCreate, async interaction => {
       sellerDiscordId: interaction.user.id // <-- store the Discord ID
     });
 
+    // Persist to Airtable so state survives restarts
+    let orderRecordId = (sellerMap.get(channelId) || {}).orderRecordId;
+    if (!orderRecordId) {
+      const orderNumber = interaction.channel.name.toUpperCase();
+      const recs = await base('Unfulfilled Orders Log').select({
+        filterByFormula: `{Order ID} = "${orderNumber}"`,
+        maxRecords: 1
+      }).firstPage();
+      if (recs.length) orderRecordId = recs[0].id;
+    }
+    if (orderRecordId) {
+      await base('Unfulfilled Orders Log').update(orderRecordId, {
+        'Linked Seller ID': [sellerRecord.id],
+        'Seller Discord ID': interaction.user.id,
+        'Seller Confirmed?': false
+      });
+    }
 
 
     const confirmRow = new ActionRowBuilder().addComponents(
@@ -245,14 +306,51 @@ client.on(Events.InteractionCreate, async interaction => {
   const data = sellerMap.get(interaction.channel.id);
 
   if (interaction.customId === 'confirm_seller') {
-    sellerMap.set(interaction.channel.id, { ...data, confirmed: true });
+  // 1) Mark as confirmed in memory
+  sellerMap.set(interaction.channel.id, { ...data, confirmed: true });
 
-    await interaction.update({
-      content: `✅ Seller ID confirmed.\nPlease upload **6 different** pictures of the pair like shown below to prove it's in-hand and complete.`,
-      components: [],
-      files: ['https://i.imgur.com/JKaeeNz.png']
-    });
+  // 2) Persist to Airtable (so it survives restarts)
+  try {
+    let orderRecordId = (sellerMap.get(interaction.channel.id) || {}).orderRecordId;
+
+    // Fallback if the bot restarted and lost memory
+    if (!orderRecordId) {
+      const orderNumber = interaction.channel.name.toUpperCase();
+      const recs = await base('Unfulfilled Orders Log').select({
+        filterByFormula: `{Order ID} = "${orderNumber}"`,
+        maxRecords: 1
+      }).firstPage();
+      if (recs.length) {
+        orderRecordId = recs[0].id;
+        // also re-cache what we can
+        sellerMap.set(interaction.channel.id, {
+          ...(sellerMap.get(interaction.channel.id) || {}),
+          orderRecordId,
+          sellerRecordId: (recs[0].get('Linked Seller ID') || [])[0],
+          sellerDiscordId: recs[0].get('Seller Discord ID'),
+          dealEmbedId: recs[0].get('Deal Embed Message ID'),
+          confirmed: true
+        });
+      }
+    }
+
+    if (orderRecordId) {
+      await base('Unfulfilled Orders Log').update(orderRecordId, {
+        'Seller Confirmed?': true  // <-- Checkbox field on Unfulfilled Orders Log
+      });
+    }
+  } catch (e) {
+    console.warn('Could not persist Seller Confirmed? to Airtable:', e);
   }
+
+  // 3) Continue with the flow
+  await interaction.update({
+    content: `✅ Seller ID confirmed.\nPlease upload **6 different** pictures of the pair like shown below to prove it's in-hand and complete.`,
+    components: [],
+    files: ['https://i.imgur.com/JKaeeNz.png']
+  });
+}
+
 
   if (interaction.customId === 'reject_seller') {
     await interaction.update({
@@ -380,14 +478,35 @@ client.on(Events.InteractionCreate, async interaction => {
     const channel = interaction.channel;
     const messages = await channel.messages.fetch({ limit: 50 });
 
-    const sellerData = sellerMap.get(channel.id);
+    let sellerData = sellerMap.get(channel.id);
+    if (!sellerData) {
+      const orderNumber = channel.name.toUpperCase();
+      const recs = await base('Unfulfilled Orders Log').select({
+        filterByFormula: `{Order ID} = "${orderNumber}"`,
+        maxRecords: 1
+      }).firstPage();
+
+      const rec = recs[0];
+      if (rec) {
+        sellerData = {
+          sellerRecordId: (rec.get('Linked Seller ID') || [])[0], // linked record id (recXXXX)
+          orderRecordId: rec.id,
+          sellerDiscordId: rec.get('Seller Discord ID'),
+          dealEmbedId: rec.get('Deal Embed Message ID')
+        };
+
+        sellerMap.set(channel.id, sellerData); // cache again
+      }
+    }
+
     if (sellerData?.dealConfirmed) {
       return interaction.editReply({ content: '⚠️ This deal has already been confirmed.' });
     }
 
-    if (!sellerData || !sellerData.sellerId || !sellerData.orderRecordId || !sellerData.sellerRecordId) {
-      return interaction.editReply({ content: '❌ Missing Seller ID or Order Claim ID.' });
+    if (!sellerData || !sellerData.orderRecordId || !sellerData.sellerRecordId) {
+      return interaction.editReply({ content: '❌ Missing linked Seller or Order Claim ID.' });
     }
+
 
     const imageMsg = messages.find(m =>
       m.attachments.size > 0 && [...m.attachments.values()].some(att => att.contentType?.startsWith('image/'))
@@ -397,9 +516,28 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.editReply({ content: '❌ No image found in recent messages.' });
     }
 
-    const dealMsg = messages.find(m => m.embeds.length > 0);
-    const embed = dealMsg?.embeds?.[0];
-    if (!embed || !embed.description) {
+    let embed;
+
+    // try the stored message id first
+    const storedId = sellerMap.get(channel.id)?.dealEmbedId;
+    if (storedId) {
+      const m = await channel.messages.fetch(storedId).catch(() => null);
+      embed = m?.embeds?.[0];
+    }
+
+    // fallback: search deeper (paginate up to 500 msgs)
+    if (!embed) {
+      const msgs = await fetchUpTo(channel, 500); // 👈 scan up to 500
+      const m = msgs.find(msg =>
+        msg.author.id === client.user.id &&
+        Array.isArray(msg.embeds) &&
+        msg.embeds.some(e => e?.title === '💸 Deal Claimed' && e?.description)
+      );
+      embed = m?.embeds?.find(e => e?.title === '💸 Deal Claimed');
+    }
+
+
+    if (!embed?.description) {
       return interaction.editReply({ content: '❌ Missing deal embed.' });
     }
 
@@ -419,13 +557,18 @@ client.on(Events.InteractionCreate, async interaction => {
       const sellerDiscordId = sellerData?.sellerDiscordId;
       if (sellerDiscordId) {
         const member = await interaction.guild.members.fetch(sellerDiscordId);
-        const isTrusted = member.roles.cache.has(TRUSTED_SELLERS_ROLE_ID);
-        if (!isTrusted) {
-          finalPayout = Math.max(0, payout - 10); 
-          shippingDeduction = 10;  // <--- set the deduction
+        const trustedRoleId = TRUSTED_SELLERS_ROLE_ID;
+        let isTrusted = false;
+        if (trustedRoleId) {
+          isTrusted = member.roles.cache.has(trustedRoleId);
+        }
+        if (trustedRoleId && !isTrusted) {
+          finalPayout = Math.max(0, payout - 10);
+          shippingDeduction = 10;
           trustNote = '\n\n⚠️ Because you are not a Trusted Seller yet, we had to deduct €10 from the payout for the extra label and handling.';
         }
       }
+
     } catch (err) {
       console.warn('Could not check trusted role:', err);
     }
@@ -435,13 +578,16 @@ client.on(Events.InteractionCreate, async interaction => {
     const orderRecord = await base('Unfulfilled Orders Log').find(sellerData.orderRecordId);
     const productName = orderRecord.get('Product Name');
 
-    const sellerRecords = await base('Sellers Database')
-      .select({ filterByFormula: `{Seller ID} = "${sellerData.sellerId}"`, maxRecords: 1 })
-      .firstPage();
-
-    if (!sellerRecords.length) {
-      return interaction.editReply({ content: '❌ Seller ID not found in our system.' });
+    let sellerRecord;
+    try {
+      sellerRecord = await base('Sellers Database').find(sellerData.sellerRecordId);
+    } catch (e) {
+      // not found
     }
+    if (!sellerRecord) {
+      return interaction.editReply({ content: '❌ Linked Seller not found in our system.' });
+    }
+
 
     const duplicate = await base('Inventory Units').select({
       filterByFormula: `{Ticket Number} = "${orderNumber}"`,
@@ -503,8 +649,29 @@ client.on(Events.MessageCreate, async message => {
     message.channel.name.toUpperCase().startsWith('ORD-') &&
     message.attachments.size > 0
   ) {
-    const data = sellerMap.get(message.channel.id);
-    if (!data?.sellerId || !data?.confirmed) return;
+    let data = sellerMap.get(message.channel.id);
+    if (!data?.sellerRecordId) {
+      // hydrate from Airtable in case of restart
+      const orderNumber = message.channel.name.toUpperCase();
+      const recs = await base('Unfulfilled Orders Log').select({
+        filterByFormula: `{Order ID} = "${orderNumber}"`,
+        maxRecords: 1
+      }).firstPage();
+
+      if (recs.length) {
+        data = {
+          ...(data || {}),
+          orderRecordId: recs[0].id,
+          sellerRecordId: (recs[0].get('Linked Seller ID') || [])[0],
+          sellerDiscordId: recs[0].get('Seller Discord ID'),
+          dealEmbedId: recs[0].get('Deal Embed Message ID'),
+          confirmed: !!recs[0].get('Seller Confirmed?')  // <-- hydrate confirmation
+        };
+        sellerMap.set(message.channel.id, data);
+      }
+
+    }
+    if (!data?.sellerRecordId || !data?.confirmed) return;
 
     const currentUploads = uploadedImagesMap.get(message.channel.id) || [];
 
