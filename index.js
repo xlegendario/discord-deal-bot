@@ -30,6 +30,16 @@ const client = new Client({
   ]
 });
 
+// --- crash guards: add once, right after `const client = new Client(...)` ---
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled rejection:', err);
+});
+client.on('error', (err) => {
+  console.error('Client error:', err);
+});
+// --- end crash guards ---
+
+
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const PORT = process.env.PORT || 3000;
 const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
@@ -176,8 +186,46 @@ client.on(Events.InteractionCreate, async interaction => {
       .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
-    await interaction.showModal(modal);
+
+    try {
+      await interaction.showModal(modal);
+    } catch (err) {
+      if (err.code === 10062) {
+        await interaction.channel.send({
+          content: '⚠️ That “Verify Deal Access” button expired. Please use the new button below.',
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId('verify_access')
+                .setLabel('Verify Deal Access')
+                .setStyle(ButtonStyle.Primary)
+            )
+          ]
+        });
+        return;
+      }
+      console.error('verify_access showModal failed:', err);
+      try {
+        await interaction.reply({
+          content: '❌ Could not open the verification form. I posted a new button below—please click that.',
+          flags: MessageFlags.Ephemeral
+        });
+      } catch {}
+      try {
+        await interaction.channel.send({
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId('verify_access')
+                .setLabel('Verify Deal Access')
+                .setStyle(ButtonStyle.Primary)
+            )
+          ]
+        });
+      } catch {}
+    }
   }
+
   
   if (interaction.isModalSubmit() && interaction.customId === 'record_id_verify') {
     const recordId = interaction.fields.getTextInputValue('record_id').trim();
@@ -304,77 +352,145 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 }
   if (interaction.isButton() && ['confirm_seller', 'reject_seller'].includes(interaction.customId)) {
-  const data = sellerMap.get(interaction.channel.id);
-
-  if (interaction.customId === 'confirm_seller') {
-  // 1) Mark as confirmed in memory
-  sellerMap.set(interaction.channel.id, { ...data, confirmed: true });
-
-  // 2) Persist to Airtable (so it survives restarts)
-  try {
-    let orderRecordId = (sellerMap.get(interaction.channel.id) || {}).orderRecordId;
-
-    // Fallback if the bot restarted and lost memory
-    if (!orderRecordId) {
-      const orderNumber = interaction.channel.name.toUpperCase();
-      const recs = await base('Unfulfilled Orders Log').select({
-        filterByFormula: `{Order ID} = "${orderNumber}"`,
-        maxRecords: 1
-      }).firstPage();
-      if (recs.length) {
-        orderRecordId = recs[0].id;
-        // also re-cache what we can
-        sellerMap.set(interaction.channel.id, {
-          ...(sellerMap.get(interaction.channel.id) || {}),
-          orderRecordId,
-          sellerRecordId: (recs[0].get('Linked Seller ID') || [])[0],
-          sellerDiscordId: recs[0].get('Seller Discord ID'),
-          dealEmbedId: recs[0].get('Deal Embed Message ID'),
-          confirmed: true
+    // ⚡ Acknowledge immediately to avoid 3s timeout -> "Unknown interaction"
+    try {
+      await interaction.deferUpdate();
+    } catch (err) {
+      if (err.code === 10062) {
+        // Old buttons → re-post fresh ones
+        await interaction.channel.send({
+          content: '⚠️ Those buttons expired. Please respond again:',
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder().setCustomId('confirm_seller').setLabel('✅ Yes, that is me').setStyle(ButtonStyle.Success),
+              new ButtonBuilder().setCustomId('reject_seller').setLabel('❌ No, not me').setStyle(ButtonStyle.Danger)
+            )
+          ]
         });
+        return;
+      }
+      throw err;
+    }
+
+    const data = sellerMap.get(interaction.channel.id) || {};
+
+    if (interaction.customId === 'confirm_seller') {
+      // 1) Mark as confirmed in memory
+      sellerMap.set(interaction.channel.id, { ...data, confirmed: true });
+
+      // 2) Persist to Airtable (fallback hydration as you had)
+      try {
+        let orderRecordId = (sellerMap.get(interaction.channel.id) || {}).orderRecordId;
+        if (!orderRecordId) {
+          const orderNumber = interaction.channel.name.toUpperCase();
+          const recs = await base('Unfulfilled Orders Log').select({
+            filterByFormula: `{Order ID} = "${orderNumber}"`,
+            maxRecords: 1
+          }).firstPage();
+          if (recs.length) {
+            orderRecordId = recs[0].id;
+            sellerMap.set(interaction.channel.id, {
+              ...(sellerMap.get(interaction.channel.id) || {}),
+              orderRecordId,
+              sellerRecordId: (recs[0].get('Linked Seller ID') || [])[0],
+              sellerDiscordId: recs[0].get('Seller Discord ID'),
+              dealEmbedId: recs[0].get('Deal Embed Message ID'),
+              confirmed: true
+            });
+          }
+        }
+        if (orderRecordId) {
+          await base('Unfulfilled Orders Log').update(orderRecordId, {
+            'Seller Confirmed?': true
+          });
+        }
+      } catch (e) {
+        console.warn('Could not persist Seller Confirmed? to Airtable:', e);
+      }
+
+      // 3) Edit the original message (we used deferUpdate, so use message.edit)
+      try {
+        await interaction.message.edit({
+          content: '✅ Seller ID confirmed.\nPlease upload **6 different** pictures of the pair like shown below to prove it\'s in-hand and complete.',
+          components: []
+        });
+        // Send the reference image as a new message (safer than editing with files)
+        await interaction.channel.send({ files: ['https://i.imgur.com/JKaeeNz.png'] });
+      } catch (e) {
+        console.error('Failed to edit confirm_seller message:', e);
       }
     }
 
-    if (orderRecordId) {
-      await base('Unfulfilled Orders Log').update(orderRecordId, {
-        'Seller Confirmed?': true  // <-- Checkbox field on Unfulfilled Orders Log
-      });
+    if (interaction.customId === 'reject_seller') {
+      try {
+        await interaction.message.edit({
+          content: '⚠️ Please check if the Seller ID was filled in correctly.\n\nIf you\'re using a Seller ID from before **02/06/2025**, it\'s no longer valid.\n\nPlease click **"Process Claim"** again to fill in your correct Seller ID.',
+          components: []
+        });
+      } catch (e) {
+        console.error('Failed to edit reject_seller message:', e);
+      }
     }
-  } catch (e) {
-    console.warn('Could not persist Seller Confirmed? to Airtable:', e);
   }
-
-  // 3) Continue with the flow
-  await interaction.update({
-    content: `✅ Seller ID confirmed.\nPlease upload **6 different** pictures of the pair like shown below to prove it's in-hand and complete.`,
-    components: [],
-    files: ['https://i.imgur.com/JKaeeNz.png']
-  });
-}
-
-
-  if (interaction.customId === 'reject_seller') {
-    await interaction.update({
-      content: `⚠️ Please check if the Seller ID was filled in correctly.\n\nIf you're using a Seller ID from before **02/06/2025**, it's no longer valid.\n\nPlease click **"Process Claim"** again to fill in your correct Seller ID.`,
-      components: []
-    });
-  }
-}
 
   if (interaction.isButton() && interaction.customId === 'start_claim') {
+    // Build the modal
     const modal = new ModalBuilder()
       .setCustomId('seller_id_modal')
       .setTitle('Enter Seller ID');
 
     const input = new TextInputBuilder()
       .setCustomId('seller_id')
-      .setLabel("Seller ID (e.g. 00001)")
+      .setLabel('Seller ID (e.g. 00001)')
       .setStyle(TextInputStyle.Short)
       .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(input));
-    await interaction.showModal(modal);
+
+    try {
+      // Must happen quickly and without any prior defer/reply
+      await interaction.showModal(modal);
+    } catch (err) {
+      // If the button is old, Discord returns "Unknown interaction" (10062)
+      if (err.code === 10062) {
+        await interaction.channel.send({
+          content: '⚠️ That “Process Claim” button expired. Please use the new button below.',
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId('start_claim')
+                .setLabel('Process Claim')
+                .setStyle(ButtonStyle.Primary)
+            )
+          ]
+        });
+        return;
+      }
+
+      console.error('showModal failed:', err);
+
+      // Best-effort user feedback + fresh button
+      try {
+        await interaction.reply({
+          content: '❌ Could not open the form. I posted a new “Process Claim” button—please click that.',
+          flags: MessageFlags.Ephemeral
+        });
+      } catch {}
+      try {
+        await interaction.channel.send({
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId('start_claim')
+                .setLabel('Process Claim')
+                .setStyle(ButtonStyle.Primary)
+            )
+          ]
+        });
+      } catch {}
+    }
   }
+
 
   if (interaction.isButton() && interaction.customId === 'cancel_deal') {
       console.log(`🛑 Cancel Deal clicked in ${interaction.channel.name}`);
