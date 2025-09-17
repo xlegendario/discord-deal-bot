@@ -12,8 +12,7 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  Events,
-  MessageFlags
+  Events
 } = require('discord.js');
 const Airtable = require('airtable');
 const { createTranscript } = require('discord-html-transcripts');
@@ -208,7 +207,7 @@ client.on(Events.InteractionCreate, async interaction => {
       try {
         await interaction.reply({
           content: '❌ Could not open the verification form. I posted a new button below—please click that.',
-          flags: MessageFlags.Ephemeral
+          ephemeral: true
         });
       } catch {}
       try {
@@ -236,7 +235,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (!orderRecord) {
         return interaction.reply({
           content: `❌ No deal found for Claim ID **${recordId}**.`,
-          flags: MessageFlags.Ephemeral
+          ephemeral: true
         });
       }
 
@@ -261,7 +260,7 @@ client.on(Events.InteractionCreate, async interaction => {
       if (!dealChannel) {
         return interaction.reply({
           content: `❌ No channel found for order **${orderNumber}**.`,
-          flags: MessageFlags.Ephemeral
+          ephemeral: true
         });
       }
 
@@ -279,14 +278,14 @@ client.on(Events.InteractionCreate, async interaction => {
       // 4. Confirm success
       await interaction.reply({
         content: `✅ Access granted! You can now view <#${dealChannel.id}>.`,
-        flags: MessageFlags.Ephemeral
+        ephemeral: true
       });
 
     } catch (err) {
       console.error('❌ Error verifying deal access:', err);
       await interaction.reply({
         content: '❌ Something went wrong while verifying your access. Please try again later.',
-        flags: MessageFlags.Ephemeral
+        ephemeral: true
       });
     }
   }
@@ -330,7 +329,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
     if (orderRecordId) {
       await base('Unfulfilled Orders Log').update(orderRecordId, {
-        'Linked Seller ID': [sellerRecord.id],
+        'Linked Seller': [sellerRecord.id],
         'Seller Discord ID': interaction.user.id,
         'Seller Confirmed?': false
       });
@@ -348,7 +347,7 @@ client.on(Events.InteractionCreate, async interaction => {
     });
   } catch (err) {
     console.error('❌ Error verifying Seller ID:', err);
-    return interaction.reply({ content: '❌ An error occurred while verifying the Seller ID.', flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: '❌ An error occurred while verifying the Seller ID.', ephemeral: true });
   }
 }
   if (interaction.isButton() && ['confirm_seller', 'reject_seller'].includes(interaction.customId)) {
@@ -392,7 +391,7 @@ client.on(Events.InteractionCreate, async interaction => {
             sellerMap.set(interaction.channel.id, {
               ...(sellerMap.get(interaction.channel.id) || {}),
               orderRecordId,
-              sellerRecordId: (recs[0].get('Linked Seller ID') || [])[0],
+              sellerRecordId: (recs[0].get('Linked Seller') || [])[0],
               sellerDiscordId: recs[0].get('Seller Discord ID'),
               dealEmbedId: recs[0].get('Deal Embed Message ID'),
               confirmed: true
@@ -473,7 +472,7 @@ client.on(Events.InteractionCreate, async interaction => {
       try {
         await interaction.reply({
           content: '❌ Could not open the form. I posted a new “Process Claim” button—please click that.',
-          flags: MessageFlags.Ephemeral
+          ephemeral: true
         });
       } catch {}
       try {
@@ -497,7 +496,7 @@ client.on(Events.InteractionCreate, async interaction => {
   
       try {
           // Try to acknowledge interaction to prevent "Interaction Failed"
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral }); // private reply
+          await interaction.deferReply({ ephemeral: true }); // private reply
       } catch (err) {
           if (err.code === 10062) { // Unknown interaction = expired button
               console.warn(`⚠️ Expired Cancel Deal button clicked in ${interaction.channel.name}`);
@@ -540,10 +539,17 @@ client.on(Events.InteractionCreate, async interaction => {
 
           // ✅ Update Unfulfilled Orders Log
           await base('Unfulfilled Orders Log').update(recordId, {
-              "Fulfillment Status": "Outsource",
-              "Outsource Start Time": new Date().toISOString(),
-              "Deal Invitation URL": ""
+            "Fulfillment Status": "Outsource",
+            "Outsource Start Time": new Date().toISOString(),
+            "Deal Invitation URL": "",
+            "Deal Channel ID": "",
+            "Deal Embed Message ID": "",
+            "Seller Discord ID": "",
+            "Linked Seller": [],        // linked-record fields: use []
+            "Seller Confirmed?": false, // reset the checkbox
+            "Outsourced?": false
           });
+
 
           // ✅ Update Inventory Units if exists
           const orderNumber = channel.name.toUpperCase();
@@ -627,7 +633,7 @@ client.on(Events.InteractionCreate, async interaction => {
       const rec = recs[0];
       if (rec) {
         sellerData = {
-          sellerRecordId: (rec.get('Linked Seller ID') || [])[0], // linked record id (recXXXX)
+          sellerRecordId: (rec.get('Linked Seller') || [])[0], // linked record id (recXXXX)
           orderRecordId: rec.id,
           sellerDiscordId: rec.get('Seller Discord ID'),
           dealEmbedId: rec.get('Deal Embed Message ID')
@@ -735,7 +741,7 @@ client.on(Events.InteractionCreate, async interaction => {
       'Size': size,
       'Brand': brand,
       'VAT Type':'Margin',
-      'Purchase Price': payout,
+      'Purchase Price': finalPayout,
       'Shipping Deduction': shippingDeduction,
       'Purchase Date': new Date().toISOString().split('T')[0],
       'Seller ID': [sellerData.sellerRecordId],
@@ -794,7 +800,7 @@ client.on(Events.MessageCreate, async message => {
         data = {
           ...(data || {}),
           orderRecordId: recs[0].id,
-          sellerRecordId: (recs[0].get('Linked Seller ID') || [])[0],
+          sellerRecordId: (recs[0].get('Linked Seller') || [])[0],
           sellerDiscordId: recs[0].get('Seller Discord ID'),
           dealEmbedId: recs[0].get('Deal Embed Message ID'),
           confirmed: !!recs[0].get('Seller Confirmed?')  // <-- hydrate confirmation
