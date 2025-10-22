@@ -22,19 +22,26 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ✅ Allow Softr to call this API
+const ALLOWED_ORIGINS = [
+  'https://kickzcaviar.preview.softr.app',
+  'https://kickzcaviar.softr.app',
+  'https://app.softr.io'
+];
+
 app.use(
   cors({
-    origin: [
-      'https://kickzcaviar.preview.softr.app',
-      'https://app.softr.io'
-    ],
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // allow server-to-server / curl
+      cb(null, ALLOWED_ORIGINS.includes(origin));
+    },
     methods: ['POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'X-Requested-With'],
   })
 );
 
-// Optional but nice: handle OPTIONS for the route
-app.options('/claim-deal', cors());
+// handle preflight globally
+app.options('*', cors());
+
 
 const client = new Client({
   intents: [
@@ -219,7 +226,13 @@ app.post('/claim-deal', async (req, res) => {
       "Seller Confirmed?": false
     });
 
-    const successUrl = `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`;
+    const origin = req.get('origin');
+    const redirectBase = ALLOWED_ORIGINS.includes(origin)
+      ? origin
+      : 'https://kickzcaviar.preview.softr.app'; // fallback for non-Softr callers
+    const successUrl = `${redirectBase}/success?recordId=${recordId}`;
+
+
 
     if (req.headers['x-requested-with'] === 'fetch') {
       // Softr fetch() path → give JSON with redirect URL
