@@ -9,8 +9,12 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "airtable": "^0.11.6",
+    "cors": "^2.8.5",
     "discord-html-transcripts": "^3.2.0",
     "discord.js": "^14.21.0",
     "dotenv": "^17.0.1",
