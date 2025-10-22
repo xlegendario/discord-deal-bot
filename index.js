@@ -19,6 +19,7 @@ const { createTranscript } = require('discord-html-transcripts');
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 const client = new Client({
   intents: [
@@ -103,48 +104,81 @@ client.once('ready', async () => {
 
 
 app.post('/claim-deal', async (req, res) => {
-  const { orderNumber, productName, sku, skuSoft, size, brand, payout, recordId } = req.body;
-  console.log("📥 Received POST /claim-deal with body:", req.body);
-
-  const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
-  const pictureField = orderRecord.get('Picture');
-  const imageUrl = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
-
-  const rawSku = Array.isArray(sku) ? sku[0] : (typeof sku === 'string' ? sku : '');
-  const rawSkuSoft = Array.isArray(skuSoft) ? skuSoft[0] : (typeof skuSoft === 'string' ? skuSoft : '');
-  const finalSku = rawSku.trim() !== '' ? rawSku.trim() : rawSkuSoft.trim();
-
-  const cleanProductName = orderRecord.get('Product Name');
-  if (!orderNumber || !cleanProductName || !finalSku || !size || !brand || !payout || !recordId) {
-    return res.status(400).send("Missing required fields");
-  }
-
   try {
-    const guild = await client.guilds.fetch(process.env.GUILD_ID);
+    const src = req.body || {};
+    const recordId = (src.recordId || '').trim();
+    const sellerIdRaw = (src.sellerId || '').replace(/\D/g, ''); // digits only
+    const sellerId = sellerIdRaw ? `SE-${sellerIdRaw.padStart(5, '0')}` : '';
+
+    if (!recordId || !sellerId) {
+      return res.status(400).send('Missing recordId or sellerId');
+    }
+
+    // 1) Pull ALL required fields from Airtable by recordId
+    const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
+    if (!orderRecord) return res.status(404).send('Claim not found');
+    const orderNumber  = String(orderRecord.get('Order ID') || '');
+    const size         = orderRecord.get('Size') || '';
+    const brand        = orderRecord.get('Brand') || '';
+    // Try a few possible column names so you don't have to edit code later
+    const payout = Number(
+      orderRecord.get('Outsource Buying Price') ??
+      orderRecord.get('Outsource Payout') ??
+      orderRecord.get('Outsource') ??
+      0
+    );
+    const productName =
+      orderRecord.get('Product Name') ??
+      orderRecord.get('Shopify Product Name') ??
+      '';
+    const sku          = orderRecord.get('SKU') || '';
+    const skuSoft      = orderRecord.get('SKU (Soft)') || '';
+
+    const pictureField = orderRecord.get('Picture');
+    const imageUrl     = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
+
+    const finalSku = (sku && sku.trim()) || (skuSoft && skuSoft.trim()) || '';
+
+    if (!orderNumber || !productName || !finalSku || !size || !brand || !Number.isFinite(payout)) {
+      return res.status(400).send('Missing required order fields in Airtable');
+    }
+
+    // 2) Verify Seller exists
+    const sellerRecords = await base('Sellers Database')
+      .select({ filterByFormula: `{Seller ID} = "${sellerId}"`, maxRecords: 1 })
+      .firstPage();
+    if (sellerRecords.length === 0) {
+      return res.status(400).send(`Seller ID ${sellerId} not found`);
+    }
+    const sellerRecord = sellerRecords[0];
+
+    // 3) Create Discord channel + invite + embed
+    const guild    = await client.guilds.fetch(process.env.GUILD_ID);
     const category = await guild.channels.fetch(process.env.CATEGORY_ID);
 
     const channel = await guild.channels.create({
       name: `${orderNumber.toLowerCase()}`,
       type: ChannelType.GuildText,
       parent: category.id,
-      permissionOverwrites: [
-        {
-          id: guild.roles.everyone,
-          deny: [PermissionsBitField.Flags.ViewChannel]
-        }
-      ]
+      permissionOverwrites: [{ id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] }]
     });
 
-    const invite = await client.channels.fetch(VERIFY_CHANNEL_ID).then(ch => ch.createInvite({ maxUses: 1, unique: true }));
+    const invite = await client.channels.fetch(VERIFY_CHANNEL_ID)
+      .then(ch => ch.createInvite({ maxUses: 1, unique: true }));
 
     const embed = new EmbedBuilder()
-      .setTitle("💸 Deal Claimed")
-      .setDescription(`**Order:** ${orderNumber}\n**Product:** ${cleanProductName}\n**SKU:** ${finalSku}\n**Size:** ${size}\n**Brand:** ${brand}\n**Payout:** €${payout.toFixed(2)}`)
+      .setTitle('💸 Deal Claimed')
+      .setDescription(
+        `**Order:** ${orderNumber}\n` +
+        `**Product:** ${productName}\n` +
+        `**SKU:** ${finalSku}\n` +
+        `**Size:** ${size}\n` +
+        `**Brand:** ${brand}\n` +
+        `**Payout:** €${payout.toFixed(2)}\n` +
+        `**Seller (form):** ${sellerId}`
+      )
       .setColor(0xFFED00);
-
-    if (imageUrl) {
-      embed.setImage(imageUrl);
-    }
+    if (imageUrl) embed.setImage(imageUrl);
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('start_claim').setLabel('Process Claim').setStyle(ButtonStyle.Primary),
@@ -152,25 +186,31 @@ app.post('/claim-deal', async (req, res) => {
     );
 
     const dealMsg = await channel.send({ embeds: [embed], components: [row] });
+
+    // Cache + persist who claimed
     sellerMap.set(channel.id, {
       orderRecordId: recordId,
-      dealEmbedId: dealMsg.id,           // <-- store the message ID
+      dealEmbedId: dealMsg.id,
+      sellerRecordId: sellerRecord.id,
+      confirmed: false
     });
 
-    // (optional but recommended: persist to Airtable so it survives restarts)
     await base('Unfulfilled Orders Log').update(recordId, {
       "Deal Invitation URL": invite.url,
       "Fulfillment Status": "Claim Processing",
-      "Deal Channel ID": channel.id,          // add these fields in Airtable
-      "Deal Embed Message ID": dealMsg.id
+      "Deal Channel ID": channel.id,
+      "Deal Embed Message ID": dealMsg.id,
+      "Linked Seller": [sellerRecord.id],
+      "Seller Confirmed?": false
     });
 
-    res.redirect(302, `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`);
+    return res.redirect(302, `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`);
   } catch (err) {
-    console.error("❌ Error during claim creation:", err);
-    res.status(500).send("Internal Server Error");
+    console.error('❌ Error during claim creation:', err);
+    return res.status(500).send('Internal Server Error');
   }
 });
+
 
 client.on(Events.InteractionCreate, async interaction => {
   if (interaction.isButton() && interaction.customId === 'verify_access') {
