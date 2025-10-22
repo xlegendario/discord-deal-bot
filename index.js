@@ -197,7 +197,7 @@ app.post('/claim-deal', async (req, res) => {
         `**Size:** ${size}\n` +
         `**Brand:** ${brand}\n` +
         `**Payout:** €${payout.toFixed(2)}\n` +
-        `**Seller (form):** ${sellerId}`
+        `**Seller:** ${sellerId}`
       )
       .setColor(0xFFED00);
     if (imageUrl) embed.setImage(imageUrl);
