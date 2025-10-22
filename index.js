@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');      
 const {
   Client,
   GatewayIntentBits,
@@ -20,6 +21,20 @@ const { createTranscript } = require('discord-html-transcripts');
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// ✅ Allow Softr to call this API
+app.use(
+  cors({
+    origin: [
+      'https://kickzcaviar.preview.softr.app',
+      'https://app.softr.io'
+    ],
+    methods: ['POST', 'OPTIONS'],
+  })
+);
+
+// Optional but nice: handle OPTIONS for the route
+app.options('/claim-deal', cors());
 
 const client = new Client({
   intents: [
@@ -204,7 +219,15 @@ app.post('/claim-deal', async (req, res) => {
       "Seller Confirmed?": false
     });
 
-    return res.redirect(302, `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`);
+    const successUrl = `https://kickzcaviar.preview.softr.app/success?recordId=${recordId}`;
+
+    if (req.headers['x-requested-with'] === 'fetch') {
+      // Softr fetch() path → give JSON with redirect URL
+      return res.status(200).json({ ok: true, redirect: successUrl });
+    }
+    // Browser form / direct hit → normal redirect
+    return res.redirect(302, successUrl);
+
   } catch (err) {
     console.error('❌ Error during claim creation:', err);
     return res.status(500).send('Internal Server Error');
