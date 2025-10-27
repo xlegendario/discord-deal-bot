@@ -40,7 +40,7 @@ app.use(
 );
 
 // handle preflight globally
-app.options('*', cors());
+app.options(/.*/, cors());
 
 
 const client = new Client({
