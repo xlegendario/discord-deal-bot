@@ -93,6 +93,22 @@ async function fetchUpTo(channel, max = 500) {
   return collected;
 }
 
+function asText(v) {
+  if (v == null) return '';
+  if (Array.isArray(v)) {
+    if (v.length === 0) return '';
+    const first = v[0];
+    if (first == null) return '';
+    if (typeof first === 'object') {
+      if (first.text != null)  return String(first.text);
+      if (first.name != null)  return String(first.name);
+      if (first.value != null) return String(first.value);
+    }
+    return String(first);
+  }
+  return String(v);
+}
+
 
 client.once('ready', async () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
@@ -153,13 +169,15 @@ app.post('/claim-deal', async (req, res) => {
       orderRecord.get('Product Name') ??
       orderRecord.get('Shopify Product Name') ??
       '';
-    const sku          = orderRecord.get('SKU') || '';
-    const skuSoft      = orderRecord.get('SKU (Soft)') || '';
+
+    const sku     = asText(orderRecord.get('SKU')).trim();          // Lookup-safe
+    const skuSoft = asText(orderRecord.get('SKU (Soft)')).trim();   // Text field
 
     const pictureField = orderRecord.get('Picture');
     const imageUrl     = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
 
-    const finalSku = (sku && sku.trim()) || (skuSoft && skuSoft.trim()) || '';
+    // prefer SKU; if empty, fall back to SKU (Soft)
+    const finalSku = sku || skuSoft;
 
     if (!orderNumber || !productName || !finalSku || !size || !brand || !Number.isFinite(payout)) {
       return res.status(400).send('Missing required order fields in Airtable');
