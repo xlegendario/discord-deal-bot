@@ -170,14 +170,13 @@ app.post('/claim-deal', async (req, res) => {
       orderRecord.get('Shopify Product Name') ??
       '';
 
-    const sku     = asText(orderRecord.get('SKU')).trim();          // Lookup-safe
-    const skuSoft = asText(orderRecord.get('SKU (Soft)')).trim();   // Text field
+    // ✅ LOOKUP-SAFE READS + SIMPLE FALLBACK
+    const sku     = asText(orderRecord.get('SKU')).trim();        // Lookup field
+    const skuSoft = asText(orderRecord.get('SKU (Soft)')).trim(); // Text field
+    const finalSku = sku || skuSoft;
 
     const pictureField = orderRecord.get('Picture');
     const imageUrl     = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
-
-    // prefer SKU; if empty, fall back to SKU (Soft)
-    const finalSku = sku || skuSoft;
 
     if (!orderNumber || !productName || !finalSku || !size || !brand || !Number.isFinite(payout)) {
       return res.status(400).send('Missing required order fields in Airtable');
