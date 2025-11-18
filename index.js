@@ -266,6 +266,14 @@ app.post('/claim-deal', async (req, res) => {
 
 
 client.on(Events.InteractionCreate, async interaction => {
+  // ✅ Ignore Partner bot interactions (same token, different script)
+  if (
+    (interaction.isButton() && interaction.customId.startsWith('partner_')) ||
+    (interaction.isModalSubmit() && interaction.customId.startsWith('partner_'))
+  ) {
+    return;
+  }
+  
   if (interaction.isButton() && interaction.customId === 'verify_access') {
     const modal = new ModalBuilder()
       .setCustomId('record_id_verify')
@@ -374,13 +382,24 @@ client.on(Events.InteractionCreate, async interaction => {
         ephemeral: true
       });
 
-    } catch (err) {
-      console.error('❌ Error verifying deal access:', err);
-      await interaction.reply({
-        content: '❌ Something went wrong while verifying your access. Please try again later.',
-        ephemeral: true
-      });
-    }
+        } catch (err) {
+          console.error('❌ Error verifying deal access:', err);
+          try {
+            if (interaction.replied || interaction.deferred) {
+              await interaction.followUp({
+                content: '❌ Something went wrong while verifying your access. Please try again later.',
+                ephemeral: true
+              });
+            } else {
+              await interaction.reply({
+                content: '❌ Something went wrong while verifying your access. Please try again later.',
+                ephemeral: true
+              });
+            }
+          } catch (e) {
+            console.error('❌ Failed to send verify_access error reply:', e);
+          }
+        }
   }
   
   if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
