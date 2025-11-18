@@ -766,9 +766,13 @@ client.on(Events.InteractionCreate, async interaction => {
       const m = msgs.find(msg =>
         msg.author.id === client.user.id &&
         Array.isArray(msg.embeds) &&
-        msg.embeds.some(e => e?.title === '💸 Deal Claimed' && e?.description)
+        msg.embeds.some(e =>
+          e?.title?.includes('Deal Claimed') &&            // looser title check
+          e?.description?.includes('**Order:**') &&        // make sure it’s the right embed
+          e?.description?.includes('**Payout:**')
+        )
       );
-      embed = m?.embeds?.find(e => e?.title === '💸 Deal Claimed');
+      embed = m?.embeds?.find(e => e?.title?.includes('Deal Claimed'));
     }
 
     if (!embed?.description) {
