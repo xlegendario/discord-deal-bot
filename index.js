@@ -178,11 +178,10 @@ app.post('/quick-deal/create', async (req, res) => {
     const embed = new EmbedBuilder()
       .setTitle('⚡ Quick Deal')
       .setDescription(
-        `**Order:** ${orderNumber || '-'}\n` +
-        `**Product:** ${productName || '-'}\n` +
-        `**SKU:** ${sku || '-'}\n` +
-        `**Size:** ${size || '-'}\n` +
-        `**Brand:** ${brand || '-'}`
+        `**${productName || '-'}**\n` +   // bold product name
+        `${sku || '-'}\n` +              // SKU, no label
+        `${size || '-'}\n` +             // size, no label
+        `${brand || '-'}`                // brand, no label
       )
       .setColor(0xFFED00)
       .addFields(
@@ -307,11 +306,10 @@ app.post('/quick-deal/create-partners', async (req, res) => {
     const embed = new EmbedBuilder()
       .setTitle('⚡ Quick Deal')
       .setDescription(
-        `**Order:** ${orderNumber || '-'}\n` +
-        `**Product:** ${productName || '-'}\n` +
-        `**SKU:** ${sku || '-'}\n` +
-        `**Size:** ${size || '-'}\n` +
-        `**Brand:** ${brand || '-'}`
+        `**${productName || '-'}**\n` +
+        `${sku || '-'}\n` +
+        `${size || '-'}\n` +
+        `${brand || '-'}`
       )
       .setColor(0xFFED00)
       .addFields(
