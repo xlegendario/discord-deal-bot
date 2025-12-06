@@ -364,14 +364,13 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 
   /* ---------- QUICK DEAL: modal submit (Seller ID + VAT) ---------- */
-
   if (interaction.isModalSubmit() && interaction.customId.startsWith('quick_claim_modal_')) {
-    const recordId = interaction.customId.replace('quick_claim_modal_', '').trim(); // Unfulfilled Orders Log recId
+    const recordId = interaction.customId.replace('quick_claim_modal_', '').trim();
     const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
     const vatRaw = interaction.fields.getTextInputValue('vat_type').trim().toLowerCase();
-
+  
     const sellerId = `SE-${sellerIdRaw.padStart(5, '0')}`;
-
+  
     let vatType;
     if (vatRaw === 'margin') vatType = 'Margin';
     else if (vatRaw === 'vat21' || vatRaw === '21' || vatRaw === '21%') vatType = 'VAT21';
@@ -384,7 +383,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     try {
-      // 1) Validate Seller in Sellers Database
+      // 1) Validate Seller
       const sellerRecords = await base('Sellers Database')
         .select({ filterByFormula: `{Seller ID} = "${sellerId}"`, maxRecords: 1 })
         .firstPage();
@@ -397,12 +396,28 @@ client.on(Events.InteractionCreate, async interaction => {
       }
       const sellerRecord = sellerRecords[0];
 
-      // 2) Fetch the order directly from Unfulfilled Orders Log
-      const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
+      // 2) Fetch Quick Deal record → linked Unfulfilled Order
+      const quickDealRecord = await base(QUICK_DEALS_TABLE).find(recordId);
 
-      const orderNumber = String(orderRecord.get('Order ID') || '');
-      const size        = orderRecord.get('Size') || '';
-      const brand       = orderRecord.get('Brand') || '';
+      const linked = quickDealRecord.get(QUICK_DEAL_LINKED_ORDER_FIELD);
+      let orderRecordId;
+      if (Array.isArray(linked) && linked.length > 0) {
+        orderRecordId = linked[0];
+      } else if (typeof linked === 'string') {
+        orderRecordId = linked;
+      }
+
+      if (!orderRecordId) {
+        return interaction.reply({
+          content: '❌ This Quick Deal is not linked to an order.',
+          ephemeral: true
+        });
+      }
+
+      const orderRecord = await base('Unfulfilled Orders Log').find(orderRecordId);
+      const orderNumber  = String(orderRecord.get('Order ID') || '');
+      const size         = orderRecord.get('Size') || '';
+      const brand        = orderRecord.get('Brand') || '';
       const productName =
         orderRecord.get('Product Name') ??
         orderRecord.get('Shopify Product Name') ??
@@ -418,10 +433,7 @@ client.on(Events.InteractionCreate, async interaction => {
       const payout = (vatType === 'VAT0') ? payoutVat0 : payoutMargin;
 
       const pictureField = orderRecord.get('Picture');
-      const imageUrl =
-        Array.isArray(pictureField) && pictureField.length > 0
-          ? pictureField[0].url
-          : null;
+      const imageUrl     = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
 
       if (!orderNumber || !productName || !finalSku || !size || !brand || !Number.isFinite(payout) || payout <= 0) {
         return interaction.reply({
@@ -430,19 +442,16 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      // 3) Create Discord ORD-xxxx channel for this claim
-      const guild = await client.guilds.fetch(GUILD_ID);
-      const category = await guild.channels.fetch(DEAL_CATEGORY_ID);
+      // 3) Create Discord channel for this Quick Deal
+      const guild    = await client.guilds.fetch(process.env.GUILD_ID);
+      const category = await guild.channels.fetch(process.env.CATEGORY_ID);
 
       const channel = await guild.channels.create({
         name: `${orderNumber.toLowerCase()}`,
         type: ChannelType.GuildText,
-        parent: category?.id,
+        parent: category.id,
         permissionOverwrites: [
-          {
-            id: guild.roles.everyone,
-            deny: [PermissionsBitField.Flags.ViewChannel]
-          },
+          { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
           {
             id: interaction.user.id,
             allow: [
@@ -454,7 +463,7 @@ client.on(Events.InteractionCreate, async interaction => {
         ]
       });
 
-      // 4) Send claimed embed in that channel
+      // 4) Embed + buttons: Process Claim + Cancel (same style as normal deals)
       const embed = new EmbedBuilder()
         .setTitle('💸 Quick Deal Claimed')
         .setDescription(
@@ -465,7 +474,7 @@ client.on(Events.InteractionCreate, async interaction => {
           `**Brand:** ${brand}\n` +
           `**Payout:** €${payout.toFixed(2)}\n` +
           `**VAT Type:** ${vatType}\n` +
-          `**Seller:** ${sellerId}`
+          `**Seller (claimed with):** ${sellerId}`
         )
         .setColor(0xFFED00);
 
@@ -473,49 +482,56 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
+          .setCustomId('start_claim')
+          .setLabel('Process Claim')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
           .setCustomId('cancel_deal')
           .setLabel('Cancel Deal')
           .setStyle(ButtonStyle.Danger)
       );
 
-      const dealMsg = await channel.send({
-        content:
-          '👋 Thanks for claiming this Quick Deal!\n\n' +
-          '📸 Please upload **6 clear pictures** of the pair (like shown below) to prove it is in-hand and complete.\n' +
-          'Once all 6 are uploaded, an admin can confirm the deal.',
-        embeds: [embed],
-        components: [row]
-      });
+      const dealMsg = await channel.send({ embeds: [embed], components: [row] });
 
-      // guide image
-      await channel.send({ files: ['https://i.imgur.com/JKaeeNz.png'] });
-
-      // 5) Cache + persist who claimed
+      // 5) Cache data, but do NOT mark confirmed yet → wait for "Is this you?"
       sellerMap.set(channel.id, {
-        orderRecordId: recordId,
+        orderRecordId,
         dealEmbedId: dealMsg.id,
         sellerRecordId: sellerRecord.id,
         sellerDiscordId: interaction.user.id,
         vatType,
         payoutChosen: payout,
         isQuickDeal: true,
-        confirmed: false
+        quickDealRecordId: recordId,
+        confirmed: false  // 🔑 now same flow as normal claims
       });
 
-      await base('Unfulfilled Orders Log').update(recordId, {
-        'Claimed Channel ID': channel.id,
-        'Claimed Message ID': dealMsg.id,
-        'Claimed Seller ID': [sellerRecord.id],
-        'Claimed Seller Discord ID': interaction.user.id,
-        'Claimed Seller Confirmed?': false,
-        'Claimed Seller VAT Type': vatType,
-        'Fulfillment Status': 'Claim Processing'
+      // 6) Update Unfulfilled Orders Log (Seller Confirmed? stays false)
+      await base('Unfulfilled Orders Log').update(orderRecordId, {
+        "Fulfillment Status": "Claim Processing",
+        "Deal Channel ID": channel.id,
+        "Deal Embed Message ID": dealMsg.id,
+        "Claimed Seller ID": [sellerRecord.id],        // linked record
+        "Claimed Seller Discord ID": interaction.user.id,
+        "Claimed Seller Confirmed?": false,
+        "Claimed Seller VAT Type": vatType
       });
 
+      // 7) Mark Quick Deal as claimed (optional)
+      try {
+        await base(QUICK_DEALS_TABLE).update(recordId, {
+          "Status": "Claimed"
+        });
+      } catch (e) {
+        console.warn('⚠️ Could not update Quick Deal status:', e.message);
+      }
+
+      // 8) Ephemeral reply: tell them to click Process Claim
       await interaction.reply({
-        content: `✅ Quick Deal claimed! Your deal channel is <#${channel.id}>.\nPlease upload **6 pictures** of the pair as requested in the channel.`,
+        content: `✅ Quick Deal claimed! Your deal channel is <#${channel.id}>.\nPlease click **"Process Claim"** in that channel to verify your Seller ID and start the photo upload.`,
         ephemeral: true
       });
+
     } catch (err) {
       console.error('❌ Error processing Quick Deal claim:', err);
       return interaction.reply({
@@ -523,7 +539,6 @@ client.on(Events.InteractionCreate, async interaction => {
         ephemeral: true
       });
     }
-    return;
   }
 
   /* ---------- CANCEL DEAL BUTTON (Quick Deals + legacy) ---------- */
