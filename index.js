@@ -152,6 +152,7 @@ app.post('/quick-deal/create', async (req, res) => {
       brand,
       currentPayout,
       maxPayout,
+      timeToMaxPayout,  // 👈 NEW
       imageUrl
     } = req.body || {};
 
@@ -192,9 +193,15 @@ app.post('/quick-deal/create', async (req, res) => {
           name: 'Max Payout',
           value: maxPayout != null ? String(maxPayout) : '-',
           inline: true
+        },
+        {
+          name: 'Time to Max Payout',                     // 👈 label in Discord
+          value: timeToMaxPayout != null && timeToMaxPayout !== ''
+            ? String(timeToMaxPayout)
+            : '-',
+          inline: true
         }
       );
-
     if (imageUrl) embed.setImage(imageUrl);
 
     const row = new ActionRowBuilder().addComponents(
