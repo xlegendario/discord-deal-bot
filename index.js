@@ -332,7 +332,6 @@ app.post('/quick-deal/create', async (req, res) => {
     // 🔹 Store everything directly in the Quick Deals record on Airtable
     try {
       await base(QUICK_DEALS_TABLE).update(recordId, {
-        'Claim Channel ID': targetChannelId,
         'Claim Message ID': msg.id,
         'Claim Message URL': messageUrl
       });
@@ -360,11 +359,13 @@ app.post('/quick-deal/update-embed', async (req, res) => {
   try {
     const { channelId, messageId, currentPayout, maxPayout } = req.body || {};
 
-    if (!channelId || !messageId) {
-      return res.status(400).send('Missing channelId or messageId');
+    const targetChannelId = channelId || QUICK_DEALS_CHANNEL_ID;
+
+    if (!targetChannelId || !messageId) {
+      return res.status(400).send('Missing QUICK_DEALS_CHANNEL_ID or messageId');
     }
 
-    const channel = await client.channels.fetch(channelId);
+    const channel = await client.channels.fetch(targetChannelId);
     if (!channel || !channel.isTextBased()) {
       return res.status(404).send('Channel not found or not text-based');
     }
