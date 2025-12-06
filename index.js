@@ -191,12 +191,12 @@ app.post('/quick-deal/create', async (req, res) => {
       .addFields(
         {
           name: 'Current Payout',
-          value: currentPayout != null ? `€${Number(currentPayout).toFixed(2)}` : '-',
+          value: currentPayout != null ? String(currentPayout) : '-',
           inline: true
         },
         {
           name: 'Max Payout',
-          value: maxPayout != null ? `€${Number(maxPayout).toFixed(2)}` : '-',
+          value: maxPayout != null ? String(maxPayout) : '-',
           inline: true
         }
       );
