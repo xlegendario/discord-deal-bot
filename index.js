@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');      
+const cors = require('cors');
 const {
   Client,
   GatewayIntentBits,
@@ -42,7 +42,6 @@ app.use(
 // handle preflight globally
 app.options(/.*/, cors());
 
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -52,7 +51,7 @@ const client = new Client({
   ]
 });
 
-// --- crash guards: add once, right after `const client = new Client(...)` ---
+// --- crash guards ---
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled rejection:', err);
 });
@@ -61,7 +60,6 @@ client.on('error', (err) => {
 });
 // --- end crash guards ---
 
-
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
 const PORT = process.env.PORT || 3000;
 const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID;
@@ -69,6 +67,13 @@ const TRANSCRIPTS_CHANNEL_ID = process.env.TRANSCRIPTS_CHANNEL_ID;
 const ADMIN_ROLE_IDS = ['942779423449579530', '1060615571118510191'];
 const TRUSTED_SELLERS_ROLE_ID = process.env.TRUSTED_SELLERS_ROLE_ID; // put your trusted sellers role ID in .env
 
+// 🔹 Quick Deals config
+const QUICK_DEALS_TABLE =
+  process.env.AIRTABLE_TABLE_QUICK_DEALS || 'Quick Deals';
+const QUICK_DEAL_LINKED_ORDER_FIELD =
+  process.env.AIRTABLE_FIELD_QD_LINKED_ORDER || 'Unfulfilled Orders Log';
+const MAKE_QUICK_DEAL_WEBHOOK_URL =
+  process.env.MAKE_QUICK_DEAL_WEBHOOK_URL || '';
 
 const sellerMap = new Map();
 const uploadedImagesMap = new Map();
@@ -82,10 +87,8 @@ async function fetchUpTo(channel, max = 500) {
     const batch = await channel.messages.fetch({ limit: batchSize, ...(beforeId ? { before: beforeId } : {}) });
     if (batch.size === 0) break;
 
-    // Push in chronological order (newest → oldest)
     for (const m of batch.values()) collected.push(m);
 
-    // Prepare for next page (oldest id in this batch)
     const oldest = batch.last();
     beforeId = oldest?.id;
     if (!beforeId) break;
@@ -108,7 +111,6 @@ function asText(v) {
   }
   return String(v);
 }
-
 
 client.once('ready', async () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
@@ -140,7 +142,9 @@ client.once('ready', async () => {
   }
 });
 
-
+//
+// LEGACY: Softr /claim-deal entrypoint (still works if you need it)
+//
 app.post('/claim-deal', async (req, res) => {
   try {
     const src = req.body || {};
@@ -152,13 +156,11 @@ app.post('/claim-deal', async (req, res) => {
       return res.status(400).send('Missing recordId or sellerId');
     }
 
-    // 1) Pull ALL required fields from Airtable by recordId
     const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
     if (!orderRecord) return res.status(404).send('Claim not found');
     const orderNumber  = String(orderRecord.get('Order ID') || '');
     const size         = orderRecord.get('Size') || '';
     const brand        = orderRecord.get('Brand') || '';
-    // Try a few possible column names so you don't have to edit code later
     const payout = Number(
       orderRecord.get('Outsource Buying Price') ??
       orderRecord.get('Outsource Payout') ??
@@ -170,9 +172,8 @@ app.post('/claim-deal', async (req, res) => {
       orderRecord.get('Shopify Product Name') ??
       '';
 
-    // ✅ LOOKUP-SAFE READS + SIMPLE FALLBACK
-    const sku     = asText(orderRecord.get('SKU')).trim();        // Lookup field
-    const skuSoft = asText(orderRecord.get('SKU (Soft)')).trim(); // Text field
+    const sku     = asText(orderRecord.get('SKU')).trim();
+    const skuSoft = asText(orderRecord.get('SKU (Soft)')).trim();
     const finalSku = sku || skuSoft;
 
     const pictureField = orderRecord.get('Picture');
@@ -182,7 +183,6 @@ app.post('/claim-deal', async (req, res) => {
       return res.status(400).send('Missing required order fields in Airtable');
     }
 
-    // 2) Verify Seller exists
     const sellerRecords = await base('Sellers Database')
       .select({ filterByFormula: `{Seller ID} = "${sellerId}"`, maxRecords: 1 })
       .firstPage();
@@ -191,7 +191,6 @@ app.post('/claim-deal', async (req, res) => {
     }
     const sellerRecord = sellerRecords[0];
 
-    // 3) Create Discord channel + invite + embed
     const guild    = await client.guilds.fetch(process.env.GUILD_ID);
     const category = await guild.channels.fetch(process.env.CATEGORY_ID);
 
@@ -226,7 +225,6 @@ app.post('/claim-deal', async (req, res) => {
 
     const dealMsg = await channel.send({ embeds: [embed], components: [row] });
 
-    // Cache + persist who claimed
     sellerMap.set(channel.id, {
       orderRecordId: recordId,
       dealEmbedId: dealMsg.id,
@@ -246,16 +244,12 @@ app.post('/claim-deal', async (req, res) => {
     const origin = req.get('origin');
     const redirectBase = ALLOWED_ORIGINS.includes(origin)
       ? origin
-      : 'https://kickzcaviar.preview.softr.app'; // fallback for non-Softr callers
+      : 'https://kickzcaviar.preview.softr.app';
     const successUrl = `${redirectBase}/success?recordId=${recordId}`;
 
-
-
     if (req.headers['x-requested-with'] === 'fetch') {
-      // Softr fetch() path → give JSON with redirect URL
       return res.status(200).json({ ok: true, redirect: successUrl });
     }
-    // Browser form / direct hit → normal redirect
     return res.redirect(302, successUrl);
 
   } catch (err) {
@@ -264,6 +258,54 @@ app.post('/claim-deal', async (req, res) => {
   }
 });
 
+//
+// 🔹 QUICK DEAL: dynamic embed updater
+//
+app.post('/quick-deal/update-embed', async (req, res) => {
+  try {
+    const { channelId, messageId, currentPayout, maxPayout } = req.body || {};
+
+    if (!channelId || !messageId) {
+      return res.status(400).send('Missing channelId or messageId');
+    }
+
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) {
+      return res.status(404).send('Channel not found or not text-based');
+    }
+
+    const msg = await channel.messages.fetch(messageId);
+    if (!msg || !msg.embeds || msg.embeds.length === 0) {
+      return res.status(404).send('Message or embed not found');
+    }
+
+    const oldEmbed = msg.embeds[0];
+    const newEmbed = EmbedBuilder.from(oldEmbed);
+
+    const fields = [...(oldEmbed.fields || [])];
+
+    const setField = (name, value) => {
+      const idx = fields.findIndex(f => f.name === name);
+      const val = value != null ? String(value) : '';
+      if (idx >= 0) {
+        fields[idx] = { ...fields[idx], value: val };
+      } else {
+        fields.push({ name, value: val, inline: true });
+      }
+    };
+
+    if (currentPayout != null) setField('Current Payout', `€${Number(currentPayout).toFixed(2)}`);
+    if (maxPayout != null) setField('Max Payout', `€${Number(maxPayout).toFixed(2)}`);
+
+    newEmbed.setFields(fields);
+
+    await msg.edit({ embeds: [newEmbed] });
+    return res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('❌ Error updating Quick Deal embed:', err);
+    return res.status(500).send('Internal Server Error');
+  }
+});
 
 client.on(Events.InteractionCreate, async interaction => {
   // ✅ Ignore Partner bot interactions (same token, different script)
@@ -273,7 +315,57 @@ client.on(Events.InteractionCreate, async interaction => {
   ) {
     return;
   }
-  
+
+  //
+  // 🔹 QUICK DEAL: Claim button → Seller ID + VAT Type modal
+  //
+  if (interaction.isButton() && interaction.customId.startsWith('quick_claim_')) {
+    const recordId = interaction.customId.replace('quick_claim_', '').trim();
+
+    const modal = new ModalBuilder()
+      .setCustomId(`quick_claim_modal_${recordId}`)
+      .setTitle('Claim Quick Deal');
+
+    const sellerInput = new TextInputBuilder()
+      .setCustomId('seller_id')
+      .setLabel('Seller ID (e.g. 00001)')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+    const vatInput = new TextInputBuilder()
+      .setCustomId('vat_type')
+      .setLabel('VAT Type (Margin / VAT21 / VAT0)')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(sellerInput),
+      new ActionRowBuilder().addComponents(vatInput)
+    );
+
+    try {
+      await interaction.showModal(modal);
+    } catch (err) {
+      if (err.code === 10062) {
+        await interaction.channel.send({
+          content: '⚠️ That Quick Deal button expired. Please use the new button if available.'
+        });
+        return;
+      }
+      console.error('quick_claim showModal failed:', err);
+      try {
+        await interaction.reply({
+          content: '❌ Could not open the Quick Deal claim form. Please try again.',
+          ephemeral: true
+        });
+      } catch {}
+    }
+    return;
+  }
+
+  //
+  // Verify access button
+  //
   if (interaction.isButton() && interaction.customId === 'verify_access') {
     const modal = new ModalBuilder()
       .setCustomId('record_id_verify')
@@ -326,12 +418,13 @@ client.on(Events.InteractionCreate, async interaction => {
     }
   }
 
-  
+  //
+  // Verify access modal submit
+  //
   if (interaction.isModalSubmit() && interaction.customId === 'record_id_verify') {
     const recordId = interaction.fields.getTextInputValue('record_id').trim();
 
     try {
-      // 1. Fetch the record from Airtable
       const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
       if (!orderRecord) {
         return interaction.reply({
@@ -340,7 +433,6 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      // 2. Find the matching Discord channel
       const orderNumber = orderRecord.get('Order ID');
       const guild = await client.guilds.fetch(process.env.GUILD_ID);
       let dealChannel = guild.channels.cache.find(
@@ -352,9 +444,7 @@ client.on(Events.InteractionCreate, async interaction => {
         if (dealChannelId) {
           try {
             dealChannel = await guild.channels.fetch(dealChannelId);
-          } catch (e) {
-            // ignore fetch error, will fall through to the error reply below
-          }
+          } catch (e) {}
         }
       }
 
@@ -365,110 +455,279 @@ client.on(Events.InteractionCreate, async interaction => {
         });
       }
 
-      // 3. Give the user access to the channel
       await dealChannel.permissionOverwrites.edit(interaction.user.id, {
         ViewChannel: true,
         SendMessages: true,
-        AttachFiles: true // <- ensure they can post photos
+        AttachFiles: true
       });
 
-      // Store the seller's Discord ID for this channel
       const existing = sellerMap.get(dealChannel.id) || {};
       sellerMap.set(dealChannel.id, { ...existing, sellerDiscordId: interaction.user.id });
 
-      // 4. Confirm success
       await interaction.reply({
         content: `✅ Access granted! You can now view <#${dealChannel.id}>.`,
         ephemeral: true
       });
 
-        } catch (err) {
-          console.error('❌ Error verifying deal access:', err);
-          try {
-            if (interaction.replied || interaction.deferred) {
-              await interaction.followUp({
-                content: '❌ Something went wrong while verifying your access. Please try again later.',
-                ephemeral: true
-              });
-            } else {
-              await interaction.reply({
-                content: '❌ Something went wrong while verifying your access. Please try again later.',
-                ephemeral: true
-              });
-            }
-          } catch (e) {
-            console.error('❌ Failed to send verify_access error reply:', e);
-          }
+    } catch (err) {
+      console.error('❌ Error verifying deal access:', err);
+      try {
+        if (interaction.replied || interaction.deferred) {
+          await interaction.followUp({
+            content: '❌ Something went wrong while verifying your access. Please try again later.',
+            ephemeral: true
+          });
+        } else {
+          await interaction.reply({
+            content: '❌ Something went wrong while verifying your access. Please try again later.',
+            ephemeral: true
+          });
         }
+      } catch (e) {
+        console.error('❌ Failed to send verify_access error reply:', e);
+      }
+    }
   }
-  
+
+  //
+  // 🔹 QUICK DEAL: modal submit (Seller ID + VAT type)
+  //
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('quick_claim_modal_')) {
+    const recordId = interaction.customId.replace('quick_claim_modal_', '').trim();
+    const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
+    const vatRaw = interaction.fields.getTextInputValue('vat_type').trim().toLowerCase();
+
+    const sellerId = `SE-${sellerIdRaw.padStart(5, '0')}`;
+
+    let vatType;
+    if (vatRaw === 'margin') vatType = 'Margin';
+    else if (vatRaw === 'vat21' || vatRaw === '21' || vatRaw === '21%') vatType = 'VAT21';
+    else if (vatRaw === 'vat0' || vatRaw === '0' || vatRaw === '0%') vatType = 'VAT0';
+    else {
+      return interaction.reply({
+        content: '❌ Invalid VAT Type. Please use **Margin**, **VAT21** or **VAT0**.',
+        ephemeral: true
+      });
+    }
+
+    try {
+      // 1) Validate Seller
+      const sellerRecords = await base('Sellers Database')
+        .select({ filterByFormula: `{Seller ID} = "${sellerId}"`, maxRecords: 1 })
+        .firstPage();
+
+      if (sellerRecords.length === 0) {
+        return interaction.reply({
+          content: `❌ Seller ID **${sellerId}** not found.`,
+          ephemeral: true
+        });
+      }
+      const sellerRecord = sellerRecords[0];
+
+      // 2) Fetch Quick Deal record
+      const quickDealRecord = await base(QUICK_DEALS_TABLE).find(recordId);
+
+      // 3) Get linked Unfulfilled Order record
+      const linked = quickDealRecord.get(QUICK_DEAL_LINKED_ORDER_FIELD);
+      let orderRecordId;
+      if (Array.isArray(linked) && linked.length > 0) {
+        orderRecordId = linked[0];
+      } else if (typeof linked === 'string') {
+        orderRecordId = linked;
+      }
+
+      if (!orderRecordId) {
+        return interaction.reply({
+          content: '❌ This Quick Deal is not linked to an order.',
+          ephemeral: true
+        });
+      }
+
+      const orderRecord = await base('Unfulfilled Orders Log').find(orderRecordId);
+      const orderNumber  = String(orderRecord.get('Order ID') || '');
+      const size         = orderRecord.get('Size') || '';
+      const brand        = orderRecord.get('Brand') || '';
+      const productName =
+        orderRecord.get('Product Name') ??
+        orderRecord.get('Shopify Product Name') ??
+        '';
+
+      const sku     = asText(orderRecord.get('SKU')).trim();
+      const skuSoft = asText(orderRecord.get('SKU (Soft)')).trim();
+      const finalSku = sku || skuSoft;
+
+      const payoutMargin = Number(orderRecord.get('Outsource Buying Price') || 0);
+      const payoutVat0   = Number(orderRecord.get('Outsource Buying Price (VAT 0%)') || 0);
+
+      const payout = (vatType === 'VAT0') ? payoutVat0 : payoutMargin;
+
+      const pictureField = orderRecord.get('Picture');
+      const imageUrl     = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
+
+      if (!orderNumber || !productName || !finalSku || !size || !brand || !Number.isFinite(payout) || payout <= 0) {
+        return interaction.reply({
+          content: '❌ Missing or invalid order fields for this Quick Deal.',
+          ephemeral: true
+        });
+      }
+
+      // 4) Create Discord channel for this Quick Deal
+      const guild    = await client.guilds.fetch(process.env.GUILD_ID);
+      const category = await guild.channels.fetch(process.env.CATEGORY_ID);
+
+      const channel = await guild.channels.create({
+        name: `${orderNumber.toLowerCase()}`,
+        type: ChannelType.GuildText,
+        parent: category.id,
+        permissionOverwrites: [
+          { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
+          {
+            id: interaction.user.id,
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.SendMessages,
+              PermissionsBitField.Flags.AttachFiles
+            ]
+          }
+        ]
+      });
+
+      const embed = new EmbedBuilder()
+        .setTitle('💸 Quick Deal Claimed')
+        .setDescription(
+          `**Order:** ${orderNumber}\n` +
+          `**Product:** ${productName}\n` +
+          `**SKU:** ${finalSku}\n` +
+          `**Size:** ${size}\n` +
+          `**Brand:** ${brand}\n` +
+          `**Payout:** €${payout.toFixed(2)}\n` +
+          `**VAT Type:** ${vatType}\n` +
+          `**Seller:** ${sellerId}`
+        )
+        .setColor(0xFFED00);
+
+      if (imageUrl) embed.setImage(imageUrl);
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('cancel_deal').setLabel('Cancel Deal').setStyle(ButtonStyle.Danger)
+      );
+
+      const dealMsg = await channel.send({ embeds: [embed], components: [row] });
+
+      // 5) Cache + persist who claimed
+      sellerMap.set(channel.id, {
+        orderRecordId,
+        dealEmbedId: dealMsg.id,
+        sellerRecordId: sellerRecord.id,
+        sellerDiscordId: interaction.user.id,
+        vatType,
+        payoutChosen: payout,
+        isQuickDeal: true,
+        quickDealRecordId: recordId,
+        confirmed: true
+      });
+
+      await base('Unfulfilled Orders Log').update(orderRecordId, {
+        "Fulfillment Status": "Claim Processing",
+        "Deal Channel ID": channel.id,
+        "Deal Embed Message ID": dealMsg.id,
+        "Linked Seller": [sellerRecord.id],
+        "Seller Discord ID": interaction.user.id,
+        "Seller Confirmed?": true,
+        "Seller VAT Type": vatType
+      });
+
+      // Optional: mark Quick Deal claimed (fields are safe to ignore if they don't exist)
+      try {
+        await base(QUICK_DEALS_TABLE).update(recordId, {
+          "Status": "Claimed",
+          "Claimed Seller ID": sellerId
+        });
+      } catch (e) {
+        console.warn('⚠️ Could not update Quick Deal status:', e.message);
+      }
+
+      await interaction.reply({
+        content: `✅ Quick Deal claimed! Your deal channel is <#${channel.id}>.\nPlease upload **6 pictures** of the pair as requested in the channel.`,
+        ephemeral: true
+      });
+
+    } catch (err) {
+      console.error('❌ Error processing Quick Deal claim:', err);
+      return interaction.reply({
+        content: '❌ Something went wrong while claiming this Quick Deal. Please try again.',
+        ephemeral: true
+      });
+    }
+  }
+
+  //
+  // Seller ID modal (legacy / Softr flow)
+  //
   if (interaction.isModalSubmit() && interaction.customId === 'seller_id_modal') {
     const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
     const sellerId = `SE-${sellerIdRaw.padStart(5, '0')}`;
     const channelId = interaction.channel.id;
 
-  try {
-    const sellerRecords = await base('Sellers Database')
-      .select({ filterByFormula: `{Seller ID} = "${sellerId}"`, maxRecords: 1 })
-      .firstPage();
+    try {
+      const sellerRecords = await base('Sellers Database')
+        .select({ filterByFormula: `{Seller ID} = "${sellerId}"`, maxRecords: 1 })
+        .firstPage();
 
-    if (sellerRecords.length === 0) {
-      return interaction.reply({
-        content: `❌ Seller ID **${sellerId}** not found. Please double-check it or create a new one if your ID is from before **02/06/2025**.`,
+      if (sellerRecords.length === 0) {
+        return interaction.reply({
+          content: `❌ Seller ID **${sellerId}** not found. Please double-check it or create a new one if your ID is from before **02/06/2025**.`,
+        });
+      }
+
+      const sellerRecord = sellerRecords[0];
+      const discordUsername = sellerRecord.get('Discord') || 'Unknown';
+
+      sellerMap.set(channelId, {
+        ...(sellerMap.get(channelId) || {}),
+        sellerId,
+        sellerRecordId: sellerRecord.id,
+        confirmed: false,
+        sellerDiscordId: interaction.user.id
       });
-    }
 
-    const sellerRecord = sellerRecords[0];
-    const discordUsername = sellerRecord.get('Discord') || 'Unknown';
+      let orderRecordId = (sellerMap.get(channelId) || {}).orderRecordId;
+      if (!orderRecordId) {
+        const orderNumber = interaction.channel.name.toUpperCase();
+        const recs = await base('Unfulfilled Orders Log').select({
+          filterByFormula: `{Order ID} = "${orderNumber}"`,
+          maxRecords: 1
+        }).firstPage();
+        if (recs.length) orderRecordId = recs[0].id;
+      }
+      if (orderRecordId) {
+        await base('Unfulfilled Orders Log').update(orderRecordId, {
+          'Linked Seller': [sellerRecord.id],
+          'Seller Discord ID': interaction.user.id,
+          'Seller Confirmed?': false
+        });
+      }
 
-    sellerMap.set(channelId, {
-      ...(sellerMap.get(channelId) || {}),
-      sellerId,
-      sellerRecordId: sellerRecord.id, // keep seller record separately
-      confirmed: false,
-      sellerDiscordId: interaction.user.id // <-- store the Discord ID
-    });
+      const confirmRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('confirm_seller').setLabel('✅ Yes, that is me').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('reject_seller').setLabel('❌ No, not me').setStyle(ButtonStyle.Danger)
+      );
 
-    // Persist to Airtable so state survives restarts
-    let orderRecordId = (sellerMap.get(channelId) || {}).orderRecordId;
-    if (!orderRecordId) {
-      const orderNumber = interaction.channel.name.toUpperCase();
-      const recs = await base('Unfulfilled Orders Log').select({
-        filterByFormula: `{Order ID} = "${orderNumber}"`,
-        maxRecords: 1
-      }).firstPage();
-      if (recs.length) orderRecordId = recs[0].id;
-    }
-    if (orderRecordId) {
-      await base('Unfulfilled Orders Log').update(orderRecordId, {
-        'Linked Seller': [sellerRecord.id],
-        'Seller Discord ID': interaction.user.id,
-        'Seller Confirmed?': false
+      await interaction.reply({
+        content: `🔍 We found this Discord Username linked to Seller ID **${sellerId}**:\n**${discordUsername}**\n\nIs this you?`,
+        components: [confirmRow],
       });
+    } catch (err) {
+      console.error('❌ Error verifying Seller ID:', err);
+      return interaction.reply({ content: '❌ An error occurred while verifying the Seller ID.', ephemeral: true });
     }
-
-
-    const confirmRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('confirm_seller').setLabel('✅ Yes, that is me').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId('reject_seller').setLabel('❌ No, not me').setStyle(ButtonStyle.Danger)
-    );
-
-    await interaction.reply({
-      content: `🔍 We found this Discord Username linked to Seller ID **${sellerId}**:\n**${discordUsername}**\n\nIs this you?`,
-      components: [confirmRow],
-    });
-  } catch (err) {
-    console.error('❌ Error verifying Seller ID:', err);
-    return interaction.reply({ content: '❌ An error occurred while verifying the Seller ID.', ephemeral: true });
   }
-}
+
   if (interaction.isButton() && ['confirm_seller', 'reject_seller'].includes(interaction.customId)) {
-    // ⚡ Acknowledge immediately to avoid 3s timeout -> "Unknown interaction"
     try {
       await interaction.deferUpdate();
     } catch (err) {
       if (err.code === 10062) {
-        // Old buttons → re-post fresh ones
         await interaction.channel.send({
           content: '⚠️ Those buttons expired. Please respond again:',
           components: [
@@ -486,10 +745,8 @@ client.on(Events.InteractionCreate, async interaction => {
     const data = sellerMap.get(interaction.channel.id) || {};
 
     if (interaction.customId === 'confirm_seller') {
-      // 1) Mark as confirmed in memory
       sellerMap.set(interaction.channel.id, { ...data, confirmed: true });
 
-      // 2) Persist to Airtable (fallback hydration as you had)
       try {
         let orderRecordId = (sellerMap.get(interaction.channel.id) || {}).orderRecordId;
         if (!orderRecordId) {
@@ -519,13 +776,11 @@ client.on(Events.InteractionCreate, async interaction => {
         console.warn('Could not persist Seller Confirmed? to Airtable:', e);
       }
 
-      // 3) Edit the original message (we used deferUpdate, so use message.edit)
       try {
         await interaction.message.edit({
           content: '✅ Seller ID confirmed.\nPlease upload **6 different** pictures of the pair like shown below to prove it\'s in-hand and complete.',
           components: []
         });
-        // Send the reference image as a new message (safer than editing with files)
         await interaction.channel.send({ files: ['https://i.imgur.com/JKaeeNz.png'] });
       } catch (e) {
         console.error('Failed to edit confirm_seller message:', e);
@@ -545,7 +800,6 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 
   if (interaction.isButton() && interaction.customId === 'start_claim') {
-    // Build the modal
     const modal = new ModalBuilder()
       .setCustomId('seller_id_modal')
       .setTitle('Enter Seller ID');
@@ -559,10 +813,8 @@ client.on(Events.InteractionCreate, async interaction => {
     modal.addComponents(new ActionRowBuilder().addComponents(input));
 
     try {
-      // Must happen quickly and without any prior defer/reply
       await interaction.showModal(modal);
     } catch (err) {
-      // If the button is old, Discord returns "Unknown interaction" (10062)
       if (err.code === 10062) {
         await interaction.channel.send({
           content: '⚠️ That “Process Claim” button expired. Please use the new button below.',
@@ -580,7 +832,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
       console.error('showModal failed:', err);
 
-      // Best-effort user feedback + fresh button
       try {
         await interaction.reply({
           content: '❌ Could not open the form. I posted a new “Process Claim” button—please click that.',
@@ -602,119 +853,109 @@ client.on(Events.InteractionCreate, async interaction => {
     }
   }
 
-
   if (interaction.isButton() && interaction.customId === 'cancel_deal') {
-      console.log(`🛑 Cancel Deal clicked in ${interaction.channel.name}`);
-  
-      try {
-          // Try to acknowledge interaction to prevent "Interaction Failed"
-          await interaction.deferReply({ ephemeral: true }); // private reply
-      } catch (err) {
-          if (err.code === 10062) { // Unknown interaction = expired button
-              console.warn(`⚠️ Expired Cancel Deal button clicked in ${interaction.channel.name}`);
-              await interaction.channel.send({
-                  content: '⚠️ This Cancel Deal button has expired. Please use the new button below.',
-                  components: [
-                      new ActionRowBuilder().addComponents(
-                          new ButtonBuilder()
-                              .setCustomId('cancel_deal')
-                              .setLabel('Cancel Deal')
-                              .setStyle(ButtonStyle.Danger)
-                      )
-                  ]
-              });
-              return; // stop here, don’t run old logic
-          } else {
-              throw err; // different error, let it bubble up
-          }
+    console.log(`🛑 Cancel Deal clicked in ${interaction.channel.name}`);
+
+    try {
+      await interaction.deferReply({ ephemeral: true });
+    } catch (err) {
+      if (err.code === 10062) {
+        console.warn(`⚠️ Expired Cancel Deal button clicked in ${interaction.channel.name}`);
+        await interaction.channel.send({
+          content: '⚠️ This Cancel Deal button has expired. Please use the new button below.',
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId('cancel_deal')
+                .setLabel('Cancel Deal')
+                .setStyle(ButtonStyle.Danger)
+            )
+          ]
+        });
+        return;
+      } else {
+        throw err;
+      }
+    }
+
+    try {
+      const channel = interaction.channel;
+      const data = sellerMap.get(channel.id);
+      let recordId = data?.orderRecordId;
+
+      if (!recordId) {
+        const orderNumber = channel.name.toUpperCase();
+        const records = await base('Unfulfilled Orders Log').select({
+          filterByFormula: `{Order ID} = "${orderNumber}"`,
+          maxRecords: 1
+        }).firstPage();
+        if (records.length > 0) {
+          recordId = records[0].id;
+        }
       }
 
-      try {
-          const channel = interaction.channel;
-          const data = sellerMap.get(channel.id);
-          let recordId = data?.orderRecordId;
-
-          if (!recordId) {
-              const orderNumber = channel.name.toUpperCase();
-              const records = await base('Unfulfilled Orders Log').select({
-                  filterByFormula: `{Order ID} = "${orderNumber}"`,
-                  maxRecords: 1
-              }).firstPage();
-              if (records.length > 0) {
-                  recordId = records[0].id;
-              }
-          }
-
-          if (!recordId) {
-              return await interaction.editReply('❌ Record ID not found.');
-          }
-
-          // ✅ Update Unfulfilled Orders Log
-          await base('Unfulfilled Orders Log').update(recordId, {
-            "Fulfillment Status": "Outsource",
-            "Outsource Start Time": new Date().toISOString(),
-            "Deal Invitation URL": "",
-            "Deal Channel ID": "",
-            "Deal Embed Message ID": "",
-            "Seller Discord ID": "",
-            "Linked Seller": [],        // linked-record fields: use []
-            "Seller Confirmed?": false, // reset the checkbox
-            "Outsourced?": false
-          });
-
-
-          // ✅ Update Inventory Units if exists
-          const orderNumber = channel.name.toUpperCase();
-          const invRecords = await base('Inventory Units').select({
-              filterByFormula: `{Ticket Number} = "${orderNumber}"`,
-              maxRecords: 1
-          }).firstPage();
-
-          if (invRecords.length > 0) {
-              await base('Inventory Units').update(invRecords[0].id, {
-                  "Verification Status": "Cancelled",
-                  "Selling Method": null,           // clear single select
-                  "Unfulfilled Orders Log": [],     // clear linked record field
-                  "Payment Status": null,           // clear single select
-                  "Availability Status": null       // clear single select
-              });
-          }
-
-          // ✅ Create transcript
-          const transcriptFileName = `transcript-${channel.name}.html`;
-          const transcript = await createTranscript(channel, { limit: -1, returnBuffer: false, fileName: transcriptFileName });
-          const transcriptsChannel = await client.channels.fetch(TRANSCRIPTS_CHANNEL_ID);
-          if (transcriptsChannel?.isTextBased()) {
-              await transcriptsChannel.send({
-                  content: `🗒️ Transcript for cancelled deal channel **${channel.name}**`,
-                  files: [transcript]
-              });
-          }
-
-          await interaction.editReply('✅ Deal has been finished or cancelled. Channel will be deleted shortly.');
-          setTimeout(() => channel.delete().catch(console.error), 3000);
-
-      } catch (err) {
-          console.error('❌ Cancel Deal error:', err);
-          await interaction.editReply('❌ Something went wrong while cancelling this deal.');
+      if (!recordId) {
+        return await interaction.editReply('❌ Record ID not found.');
       }
+
+      await base('Unfulfilled Orders Log').update(recordId, {
+        "Fulfillment Status": "Outsource",
+        "Outsource Start Time": new Date().toISOString(),
+        "Deal Invitation URL": "",
+        "Deal Channel ID": "",
+        "Deal Embed Message ID": "",
+        "Seller Discord ID": "",
+        "Linked Seller": [],
+        "Seller Confirmed?": false,
+        "Outsourced?": false
+      });
+
+      const orderNumber = channel.name.toUpperCase();
+      const invRecords = await base('Inventory Units').select({
+        filterByFormula: `{Ticket Number} = "${orderNumber}"`,
+        maxRecords: 1
+      }).firstPage();
+
+      if (invRecords.length > 0) {
+        await base('Inventory Units').update(invRecords[0].id, {
+          "Verification Status": "Cancelled",
+          "Selling Method": null,
+          "Unfulfilled Orders Log": [],
+          "Payment Status": null,
+          "Availability Status": null
+        });
+      }
+
+      const transcriptFileName = `transcript-${channel.name}.html`;
+      const transcript = await createTranscript(channel, { limit: -1, returnBuffer: false, fileName: transcriptFileName });
+      const transcriptsChannel = await client.channels.fetch(TRANSCRIPTS_CHANNEL_ID);
+      if (transcriptsChannel?.isTextBased()) {
+        await transcriptsChannel.send({
+          content: `🗒️ Transcript for cancelled deal channel **${channel.name}**`,
+          files: [transcript]
+        });
+      }
+
+      await interaction.editReply('✅ Deal has been finished or cancelled. Channel will be deleted shortly.');
+      setTimeout(() => channel.delete().catch(console.error), 3000);
+
+    } catch (err) {
+      console.error('❌ Cancel Deal error:', err);
+      await interaction.editReply('❌ Something went wrong while cancelling this deal.');
+    }
   }
 
-
-    if (interaction.isButton() && interaction.customId === 'confirm_deal') {
+  if (interaction.isButton() && interaction.customId === 'confirm_deal') {
     const memberRoles = interaction.member.roles.cache.map(role => role.id);
     const isAdmin = ADMIN_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
     if (!isAdmin) {
-      // no 'ephemeral: false' – just reply normally
       return interaction.reply({ content: '❌ You are not authorized to confirm the deal.' });
     }
 
-    // Acknowledge ASAP; catch expired button (10062)
     try {
-      // don't pass 'ephemeral' here; it's deprecated
-      await interaction.deferReply(); 
+      await interaction.deferReply();
     } catch (err) {
-      if (err.code === 10062) { // Unknown interaction = expired click
+      if (err.code === 10062) {
         await interaction.channel.send({
           content: '⚠️ This Confirm Deal button has expired. Please use the new button below.',
           components: [
@@ -745,7 +986,7 @@ client.on(Events.InteractionCreate, async interaction => {
       const rec = recs[0];
       if (rec) {
         sellerData = {
-          sellerRecordId: (rec.get('Linked Seller') || [])[0], // linked record id (recXXXX)
+          sellerRecordId: (rec.get('Linked Seller') || [])[0],
           orderRecordId: rec.id,
           sellerDiscordId: rec.get('Seller Discord ID'),
           dealEmbedId: rec.get('Deal Embed Message ID')
@@ -772,26 +1013,24 @@ client.on(Events.InteractionCreate, async interaction => {
 
     let embed;
 
-    // try the stored message id first
     const storedId = sellerMap.get(channel.id)?.dealEmbedId;
     if (storedId) {
       const m = await channel.messages.fetch(storedId).catch(() => null);
       embed = m?.embeds?.[0];
     }
 
-    // fallback: search deeper (paginate up to 500 msgs)
     if (!embed) {
       const msgs = await fetchUpTo(channel, 500);
       const m = msgs.find(msg =>
         msg.author.id === client.user.id &&
         Array.isArray(msg.embeds) &&
         msg.embeds.some(e =>
-          e?.title?.includes('Deal Claimed') &&            // looser title check
-          e?.description?.includes('**Order:**') &&        // make sure it’s the right embed
+          e?.title?.includes('Deal Claimed') &&
+          e?.description?.includes('**Order:**') &&
           e?.description?.includes('**Payout:**')
         )
       );
-      embed = m?.embeds?.find(e => e?.title?.includes('Deal Claimed'));
+      embed = m?.embeds?.find(e => e?.title?.includes('Deal Claimed') || e?.title?.includes('Quick Deal Claimed'));
     }
 
     if (!embed?.description) {
@@ -804,9 +1043,16 @@ client.on(Events.InteractionCreate, async interaction => {
     const sku = getValue('**SKU:**');
     const size = getValue('**Size:**');
     const brand = getValue('**Brand:**');
-    const payout = parseFloat(getValue('**Payout:**')?.replace('€', '') || 0);
+    const orderNumber = getValue('**Order:**');
 
-    // --- Adjust payout if user does NOT have trusted role ---
+    // payout + vatType from memory if available, otherwise from embed
+    let payout = sellerData?.payoutChosen;
+    if (payout == null) {
+      const payoutStr = getValue('**Payout:**')?.replace('€', '').replace(',', '.');
+      payout = parseFloat(payoutStr || '0');
+    }
+    let vatType = sellerData?.vatType || getValue('**VAT Type:**') || 'Margin';
+
     let finalPayout = payout;
     let shippingDeduction = 0;
     let trustNote = '';
@@ -830,9 +1076,8 @@ client.on(Events.InteractionCreate, async interaction => {
       console.warn('Could not check trusted role:', err);
     }
 
-    const orderNumber = getValue('**Order:**');
     const orderRecord = await base('Unfulfilled Orders Log').find(sellerData.orderRecordId);
-    const productName = orderRecord.get('Product Name');
+    const productName = orderRecord.get('Product Name') || orderRecord.get('Shopify Product Name') || '';
 
     let sellerRecord;
     try {
@@ -842,36 +1087,37 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.editReply({ content: '❌ Linked Seller not found in our system.' });
     }
 
-    const duplicate = await base('Inventory Units').select({
-      filterByFormula: `{Ticket Number} = "${orderNumber}"`,
-      maxRecords: 1
-    }).firstPage();
-
-    if (duplicate.length > 0) {
-      return interaction.editReply({ content: '⚠️ This deal has already been confirmed before.' });
+    // 🔹 Send data to Make instead of creating Inventory Units here
+    if (MAKE_QUICK_DEAL_WEBHOOK_URL) {
+      try {
+        await fetch(MAKE_QUICK_DEAL_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source: sellerData.isQuickDeal ? 'Quick Deal' : 'Claim Deal',
+            orderRecordId: sellerData.orderRecordId,
+            sellerRecordId: sellerData.sellerRecordId,
+            quickDealRecordId: sellerData.quickDealRecordId || null,
+            orderNumber,
+            productName,
+            sku,
+            size,
+            brand,
+            payout: finalPayout,
+            rawPayout: payout,
+            shippingDeduction,
+            vatType,
+            isTrustedSeller: shippingDeduction === 0,
+            sellerDiscordId: sellerData.sellerDiscordId,
+            channelId: channel.id
+          })
+        });
+      } catch (e) {
+        console.error('❌ Error sending data to Make webhook:', e);
+      }
+    } else {
+      console.warn('⚠️ MAKE_QUICK_DEAL_WEBHOOK_URL is not set; skipping webhook call.');
     }
-
-    await base('Inventory Units').create({
-      'Product Name': productName,
-      'SKU': sku,
-      'Size': size,
-      'Brand': brand,
-      'VAT Type':'Margin',
-      'Purchase Price': finalPayout,
-      'Shipping Deduction': shippingDeduction,
-      'Purchase Date': new Date().toISOString().split('T')[0],
-      'Seller ID': [sellerData.sellerRecordId],
-      'Ticket Number': orderNumber,
-      'Type': 'Direct',
-      'Source': 'Outsourced',
-      'Verification Status': 'Verified',
-      'Payment Status': 'To Pay',
-      'Availability Status': 'Reserved',
-      'Margin %': '10%',
-      'Payment Note': finalPayout.toFixed(2).replace('.', ','),
-      'Selling Method': 'Plug & Play',
-      'Unfulfilled Orders Log': [sellerData.orderRecordId]
-    });
 
     sellerMap.set(channel.id, { ...sellerData, dealConfirmed: true });
 
@@ -880,10 +1126,6 @@ client.on(Events.InteractionCreate, async interaction => {
     if (buttonMessage) {
       await buttonMessage.edit({ components: [] });
     }
-
-    await base('Unfulfilled Orders Log').update(sellerData.orderRecordId, {
-      'Outsourced?': true
-    });
 
     await interaction.editReply({
       content:
@@ -895,7 +1137,6 @@ client.on(Events.InteractionCreate, async interaction => {
         `📸 Please pack it as professionally as possible. If you're unsure, feel free to take a photo of the package and share it here before shipping.`
     });
   }
-
 });
 
 client.on(Events.MessageCreate, async message => {
@@ -905,7 +1146,6 @@ client.on(Events.MessageCreate, async message => {
   ) {
     let data = sellerMap.get(message.channel.id);
     if (!data?.sellerRecordId) {
-      // hydrate from Airtable in case of restart
       const orderNumber = message.channel.name.toUpperCase();
       const recs = await base('Unfulfilled Orders Log').select({
         filterByFormula: `{Order ID} = "${orderNumber}"`,
@@ -919,7 +1159,7 @@ client.on(Events.MessageCreate, async message => {
           sellerRecordId: (recs[0].get('Linked Seller') || [])[0],
           sellerDiscordId: recs[0].get('Seller Discord ID'),
           dealEmbedId: recs[0].get('Deal Embed Message ID'),
-          confirmed: !!recs[0].get('Seller Confirmed?')  // <-- hydrate confirmation
+          confirmed: !!recs[0].get('Seller Confirmed?')
         };
         sellerMap.set(message.channel.id, data);
       }
@@ -944,7 +1184,6 @@ client.on(Events.MessageCreate, async message => {
       await message.channel.send(`📸 You've uploaded ${uploadedCount}/6 required pictures.`);
     }
 
-
     if (uploadedCount >= 6 && !data?.confirmSent) {
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -962,7 +1201,6 @@ client.on(Events.MessageCreate, async message => {
     }
   }
 
-  // ✅ This was outside before — move it inside
   if (message.content === '!finish' && message.channel.name.toLowerCase().startsWith('ord-')) {
     const memberRoles = message.member.roles.cache.map(r => r.id);
     const isAdmin = ADMIN_ROLE_IDS.some(id => memberRoles.includes(id));
@@ -995,10 +1233,9 @@ client.on(Events.MessageCreate, async message => {
       } catch (err) {
         console.error(`❌ Error finishing deal ${message.channel.name}:`, err);
       }
-    }, 3600000); // 1 hour in milliseconds
+    }, 3600000); // 1 hour
   }
 });
-
 
 client.login(process.env.DISCORD_TOKEN);
 app.listen(PORT, () => {
