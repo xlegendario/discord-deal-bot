@@ -365,10 +365,10 @@ app.post('/quick-deal/create-partners', async (req, res) => {
     if (partnerRefs.length) {
       try {
         await base('Unfulfilled Orders Log').update(recordId, {
-          'Partner Quick Deals Messages': partnerRefs.join(',')
+          'Partner Quick Deals Message IDs': partnerRefs.join(',')
         });
       } catch (e) {
-        console.warn('⚠️ Could not save Partner Quick Deals Messages:', e.message);
+        console.warn('⚠️ Could not save Partner Quick Deals Message IDs:', e.message);
       }
     }
 
@@ -461,7 +461,7 @@ app.post('/quick-deal/update-embed', async (req, res) => {
     if (recordId) {
       try {
         const rec = await base('Unfulfilled Orders Log').find(recordId);
-        const refsRaw = rec.get('Partner Quick Deals Messages');
+        const refsRaw = rec.get('Partner Quick Deals Message IDs');
         if (refsRaw) {
           const refs = String(refsRaw).split(',').map(s => s.trim()).filter(Boolean);
           for (const ref of refs) {
