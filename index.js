@@ -17,7 +17,6 @@ const {
 } = require('discord.js');
 const Airtable = require('airtable');
 const { createTranscript } = require('discord-html-transcripts');
-const fetch = require('node-fetch'); // for Make webhook
 
 /* ---------------- EXPRESS SETUP ---------------- */
 
@@ -329,7 +328,8 @@ client.on(Events.InteractionCreate, async interaction => {
       .setCustomId('vat_type')
       .setLabel('VAT Type (Margin / VAT21 / VAT0)')
       .setStyle(TextInputStyle.Short)
-      .setRequired(true);
+      .setRequired(true)
+      .setPlaceholder('Exactly: "Margin", "VAT21" or "VAT0"');
 
     modal.addComponents(
       new ActionRowBuilder().addComponents(sellerInput),
