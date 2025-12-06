@@ -288,10 +288,10 @@ app.post('/quick-deal/update-embed', async (req, res) => {
     };
 
     if (currentPayout != null) {
-      setField('Current Payout', `€${Number(currentPayout).toFixed(2)}`);
+      setField('Current Payout', String(currentPayout));
     }
     if (maxPayout != null) {
-      setField('Max Payout', `€${Number(maxPayout).toFixed(2)}`);
+      setField('Max Payout', String(maxPayout));
     }
 
     newEmbed.setFields(fields);
