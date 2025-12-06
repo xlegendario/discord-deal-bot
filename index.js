@@ -17,6 +17,7 @@ const {
 } = require('discord.js');
 const Airtable = require('airtable');
 const { createTranscript } = require('discord-html-transcripts');
+const fetch = require('node-fetch'); // for Make webhook
 
 const app = express();
 app.use(express.json());
@@ -74,6 +75,9 @@ const QUICK_DEAL_LINKED_ORDER_FIELD =
   process.env.AIRTABLE_FIELD_QD_LINKED_ORDER || 'Unfulfilled Orders Log';
 const MAKE_QUICK_DEAL_WEBHOOK_URL =
   process.env.MAKE_QUICK_DEAL_WEBHOOK_URL || '';
+// Fixed Quick Deals listing channel (for the embed with the Claim button)
+const QUICK_DEALS_CHANNEL_ID =
+  process.env.QUICK_DEALS_CHANNEL_ID || '';
 
 const sellerMap = new Map();
 const uploadedImagesMap = new Map();
@@ -264,7 +268,6 @@ app.post('/claim-deal', async (req, res) => {
 app.post('/quick-deal/create', async (req, res) => {
   try {
     const {
-      channelId,          // Discord text channel ID where the deal should be posted
       recordId,           // Airtable Quick Deals recordId (recXXXX)
       orderNumber,        // e.g. "ORD-002695"
       productName,
@@ -276,11 +279,13 @@ app.post('/quick-deal/create', async (req, res) => {
       imageUrl            // optional
     } = req.body || {};
 
-    if (!channelId || !recordId) {
-      return res.status(400).send('Missing channelId or recordId');
+    const targetChannelId = QUICK_DEALS_CHANNEL_ID;
+
+    if (!targetChannelId || !recordId) {
+      return res.status(400).send('Missing QUICK_DEALS_CHANNEL_ID or recordId');
     }
 
-    const channel = await client.channels.fetch(channelId);
+    const channel = await client.channels.fetch(targetChannelId);
     if (!channel || !channel.isTextBased()) {
       return res.status(404).send('Channel not found or not text-based');
     }
@@ -321,24 +326,24 @@ app.post('/quick-deal/create', async (req, res) => {
 
     const guildId = process.env.GUILD_ID;
     const messageUrl = guildId
-      ? `https://discord.com/channels/${guildId}/${channelId}/${msg.id}`
+      ? `https://discord.com/channels/${guildId}/${targetChannelId}/${msg.id}`
       : null;
 
     // 🔹 Store everything directly in the Quick Deals record on Airtable
     try {
       await base(QUICK_DEALS_TABLE).update(recordId, {
-        'Discord Channel ID': channelId,
-        'Discord Message ID': msg.id,
-        'Discord Message URL': messageUrl
+        'Claim Channel ID': targetChannelId,
+        'Claim Message ID': msg.id,
+        'Claim Message URL': messageUrl
       });
     } catch (e) {
-      console.warn('⚠️ Could not update Quick Deals record with Discord IDs:', e.message);
+      console.warn('⚠️ Could not update Quick Deals record with Claim fields:', e.message);
     }
 
     // Still return it for Make if you want to log/use it
     return res.status(200).json({
       ok: true,
-      channelId,
+      channelId: targetChannelId,
       messageId: msg.id,
       messageUrl
     });
@@ -349,7 +354,7 @@ app.post('/quick-deal/create', async (req, res) => {
 });
 
 //
-// 🔹 QUICK DEAL: dynamic embed updater
+// 🔹 QUICK DEAL: dynamic embed updater (for the listing embed)
 //
 app.post('/quick-deal/update-embed', async (req, res) => {
   try {
@@ -1293,7 +1298,7 @@ client.on(Events.MessageCreate, async message => {
 
   if (message.content === '!finish' && message.channel.name.toLowerCase().startsWith('ord-')) {
     const memberRoles = message.member.roles.cache.map(r => r.id);
-    const isAdmin = ADMIN_ROLE_IDS.some(id => memberRoles.includes(id));
+    const isAdmin = ADMIN_ROLE_IDS.some(roleId => memberRoles.includes(roleId));
     if (!isAdmin) {
       return message.reply('❌ You are not authorized to use this command.');
     }
@@ -1306,9 +1311,7 @@ client.on(Events.MessageCreate, async message => {
       try {
         const transcriptFileName = `transcript-${message.channel.name}.html`;
         const transcript = await createTranscript(message.channel, {
-          limit: -1,
-          returnBuffer: false,
-          fileName: transcriptFileName
+          limit: -1, returnBuffer: false, fileName: transcriptFileName
         });
 
         const transcriptsChannel = await client.channels.fetch(TRANSCRIPTS_CHANNEL_ID);
