@@ -17,7 +17,7 @@ const {
 } = require('discord.js');
 const Airtable = require('airtable');
 const { createTranscript } = require('discord-html-transcripts');
-const fetch = require('node-fetch'); // 👈 needed for Make webhook
+const fetch = require('node-fetch'); // for Make webhook
 
 const QUICK_DEALS_AIRTABLE_URL =
   'https://airtable.com/invite/l?inviteId=invxw82cJp4JW5xGl&inviteToken=4b33dc79194fc583a1ebf24d84d38f92334304662e6ca9741b09132e6199adb3&utm_medium=email&utm_source=product_team&utm_content=transactional-alerts';
@@ -69,6 +69,12 @@ const GUILD_ID = process.env.GUILD_ID;
 const DEAL_CATEGORY_ID = process.env.CATEGORY_ID;                  // category for ORD-xxxx channels
 const QUICK_DEALS_CHANNEL_ID = process.env.QUICK_DEALS_CHANNEL_ID; // channel where Quick Deals listing embeds live
 const TRANSCRIPTS_CHANNEL_ID = process.env.TRANSCRIPTS_CHANNEL_ID;
+
+// Partner Quick Deals channels (comma-separated channel IDs)
+const PARTNER_QUICK_DEALS_CHANNEL_IDS = (process.env.PARTNER_QUICK_DEALS_CHANNEL_IDS || '')
+  .split(',')
+  .map(id => id.trim())
+  .filter(Boolean);
 
 // Roles / permissions
 const ADMIN_ROLE_IDS = ['942779423449579530', '1060615571118510191'];
@@ -123,6 +129,9 @@ function asText(v) {
 
 client.once('ready', async () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
+  if (PARTNER_QUICK_DEALS_CHANNEL_IDS.length) {
+    console.log('📡 Partner Quick Deals channels:', PARTNER_QUICK_DEALS_CHANNEL_IDS.join(', '));
+  }
 });
 
 /* =================================================
@@ -131,6 +140,8 @@ client.once('ready', async () => {
 
 /**
  * POST /quick-deal/create
+ *
+ * Main Quick Deal in your own server
  */
 app.post('/quick-deal/create', async (req, res) => {
   try {
@@ -190,13 +201,13 @@ app.post('/quick-deal/create', async (req, res) => {
           value: timeToMaxPayout != null && timeToMaxPayout !== ''
             ? String(timeToMaxPayout)
             : '-',
-          inline: false          // 👈 own row under the payouts
+          inline: false          // own row under the payouts
         }
       );
     if (imageUrl) embed.setImage(imageUrl);
 
     const claimButton = new ButtonBuilder()
-      .setCustomId(`quick_claim_${recordId}`) // 🔑 Unfulfilled Orders Log record ID
+      .setCustomId(`quick_claim_${recordId}`)
       .setLabel('Claim Deal')
       .setStyle(ButtonStyle.Success);
 
@@ -233,7 +244,150 @@ app.post('/quick-deal/create', async (req, res) => {
 });
 
 /**
+ * POST /quick-deal/create-partners
+ *
+ * Mirror Quick Deal in partner servers (linking back to your Claim Message URL)
+ *
+ * Body:
+ *  {
+ *    recordId: "recXXXX",            // Unfulfilled Orders Log record ID
+ *    orderNumber: "...",
+ *    productName: "...",
+ *    sku: "...",
+ *    size: "...",
+ *    brand: "...",
+ *    currentPayout: "...",
+ *    maxPayout: "...",
+ *    timeToMaxPayout: "...",
+ *    imageUrl: "https://...",
+ *    claimMessageUrl: "https://discord.com/channels/..."
+ *  }
+ *
+ * Stores partner messages in field:
+ *  "Partner Quick Deals Messages" as: "channelId:messageId,channelId2:messageId2,..."
+ */
+app.post('/quick-deal/create-partners', async (req, res) => {
+  try {
+    const {
+      recordId,
+      orderNumber,
+      productName,
+      sku,
+      size,
+      brand,
+      currentPayout,
+      maxPayout,
+      timeToMaxPayout,
+      imageUrl,
+      claimMessageUrl
+    } = req.body || {};
+
+    if (!recordId) {
+      return res.status(400).send('Missing recordId');
+    }
+    if (!PARTNER_QUICK_DEALS_CHANNEL_IDS.length) {
+      return res.status(400).send('No PARTNER_QUICK_DEALS_CHANNEL_IDS configured');
+    }
+
+    // If claimMessageUrl not provided, try to pull from Airtable
+    let finalClaimUrl = claimMessageUrl;
+    if (!finalClaimUrl) {
+      try {
+        const rec = await base('Unfulfilled Orders Log').find(recordId);
+        finalClaimUrl = rec.get('Claim Message URL');
+      } catch (e) {
+        console.warn('⚠️ Could not fetch Claim Message URL from Airtable:', e.message);
+      }
+    }
+
+    if (!finalClaimUrl) {
+      return res.status(400).send('Missing claimMessageUrl and no Claim Message URL in Airtable');
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('⚡ Quick Deal')
+      .setDescription(
+        `**Order:** ${orderNumber || '-'}\n` +
+        `**Product:** ${productName || '-'}\n` +
+        `**SKU:** ${sku || '-'}\n` +
+        `**Size:** ${size || '-'}\n` +
+        `**Brand:** ${brand || '-'}`
+      )
+      .setColor(0xFFED00)
+      .addFields(
+        {
+          name: 'Current Payout',
+          value: currentPayout != null ? String(currentPayout) : '-',
+          inline: true
+        },
+        {
+          name: 'Max Payout',
+          value: maxPayout != null ? String(maxPayout) : '-',
+          inline: true
+        },
+        {
+          name: 'Time to Max Payout',
+          value: timeToMaxPayout != null && timeToMaxPayout !== ''
+            ? String(timeToMaxPayout)
+            : '-',
+          inline: false
+        }
+      );
+    if (imageUrl) embed.setImage(imageUrl);
+
+    const claimLinkButton = new ButtonBuilder()
+      .setLabel('Claim Deal')
+      .setStyle(ButtonStyle.Link)     // link to your server
+      .setURL(finalClaimUrl);
+
+    const seeAllButton = new ButtonBuilder()
+      .setLabel('See All Quick Deals')
+      .setStyle(ButtonStyle.Link)
+      .setURL(QUICK_DEALS_AIRTABLE_URL);
+
+    const row = new ActionRowBuilder().addComponents(claimLinkButton, seeAllButton);
+
+    const partnerRefs = [];
+
+    for (const chId of PARTNER_QUICK_DEALS_CHANNEL_IDS) {
+      try {
+        const ch = await client.channels.fetch(chId).catch(() => null);
+        if (!ch || !ch.isTextBased()) {
+          console.warn(`⚠️ Partner Quick Deal channel ${chId} not found or not text-based`);
+          continue;
+        }
+        const msg = await ch.send({ embeds: [embed], components: [row] });
+        partnerRefs.push(`${chId}:${msg.id}`);
+      } catch (e) {
+        console.warn(`⚠️ Failed to send Quick Deal to partner channel ${chId}:`, e.message);
+      }
+    }
+
+    // Store references in Airtable so /update-embed can sync partner messages
+    if (partnerRefs.length) {
+      try {
+        await base('Unfulfilled Orders Log').update(recordId, {
+          'Partner Quick Deals Messages': partnerRefs.join(',')
+        });
+      } catch (e) {
+        console.warn('⚠️ Could not save Partner Quick Deals Messages:', e.message);
+      }
+    }
+
+    return res.status(200).json({
+      ok: true,
+      partnerMessages: partnerRefs
+    });
+  } catch (err) {
+    console.error('❌ Error creating partner Quick Deal embeds:', err);
+    return res.status(500).send('Internal Server Error');
+  }
+});
+
+/**
  * POST /quick-deal/update-embed
+ *
+ * Updates main Quick Deal + all partner Quick Deal messages
  */
 app.post('/quick-deal/update-embed', async (req, res) => {
   try {
@@ -252,6 +406,7 @@ app.post('/quick-deal/update-embed', async (req, res) => {
       return res.status(400).send('Missing QUICK_DEALS_CHANNEL_ID or messageId');
     }
 
+    // Optionally refresh Time to Max from Airtable
     let finalTimeToMax = timeToMaxPayout;
     if (recordId && !finalTimeToMax) {
       try {
@@ -300,7 +455,36 @@ app.post('/quick-deal/update-embed', async (req, res) => {
     }
 
     newEmbed.setFields(fields);
+
+    // Update main Quick Deal embed
     await msg.edit({ embeds: [newEmbed] });
+
+    // Also update partner messages if we know them
+    if (recordId) {
+      try {
+        const rec = await base('Unfulfilled Orders Log').find(recordId);
+        const refsRaw = rec.get('Partner Quick Deals Messages');
+        if (refsRaw) {
+          const refs = String(refsRaw).split(',').map(s => s.trim()).filter(Boolean);
+          for (const ref of refs) {
+            const [chId, mid] = ref.split(':');
+            if (!chId || !mid) continue;
+            try {
+              const ch = await client.channels.fetch(chId).catch(() => null);
+              if (!ch || !ch.isTextBased()) continue;
+              const partnerMsg = await ch.messages.fetch(mid).catch(() => null);
+              if (!partnerMsg) continue;
+
+              await partnerMsg.edit({ embeds: [newEmbed] });
+            } catch (e) {
+              console.warn('⚠️ Could not update partner Quick Deal message:', e.message);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ Could not load Partner Quick Deals Messages for update:', e.message);
+      }
+    }
 
     return res.status(200).json({ ok: true });
   } catch (err) {
@@ -311,6 +495,9 @@ app.post('/quick-deal/update-embed', async (req, res) => {
 
 /**
  * POST /quick-deal/disable
+ *
+ * Disables Claim button on main Quick Deal (your server).
+ * Partner messages stay as links to your server.
  */
 app.post('/quick-deal/disable', async (req, res) => {
   try {
@@ -346,7 +533,7 @@ app.post('/quick-deal/disable', async (req, res) => {
     const disabledClaim = new ButtonBuilder()
       .setCustomId(`quick_claim_${recordId}`)
       .setLabel('Claim Deal')
-      .setStyle(ButtonStyle.Secondary)
+      .setStyle(ButtonStyle.Secondary)  // grey
       .setDisabled(true);
 
     const seeAllButton = new ButtonBuilder()
@@ -367,6 +554,7 @@ app.post('/quick-deal/disable', async (req, res) => {
     return res.status(500).send('Internal Server Error');
   }
 });
+
 
 /* =================================================
    DISCORD INTERACTIONS – QUICK DEAL CLAIM & FLOW
@@ -562,7 +750,7 @@ client.on(Events.InteractionCreate, async interaction => {
         'Claimed Seller VAT Type': vatType
       });
 
-      // disable Claim button on listing, but keep See All Quick Deals
+      // disable Claim button on MAIN listing (partner messages are links)
       try {
         const claimMessageId = orderRecord.get('Claim Message ID');
         if (claimMessageId && QUICK_DEALS_CHANNEL_ID) {
@@ -793,7 +981,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return await interaction.editReply('❌ Record ID not found.');
       }
 
-      // re-enable Claim button on listing, keep See All Quick Deals
+      // re-enable Claim button on MAIN listing (partner messages remain links)
       try {
         if (data?.isQuickDeal) {
           const orderRecord = await base('Unfulfilled Orders Log').find(recordId);
