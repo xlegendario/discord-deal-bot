@@ -259,6 +259,96 @@ app.post('/claim-deal', async (req, res) => {
 });
 
 //
+// 🔹 QUICK DEAL: create initial embed + Claim button AND store IDs in Airtable
+//
+app.post('/quick-deal/create', async (req, res) => {
+  try {
+    const {
+      channelId,          // Discord text channel ID where the deal should be posted
+      recordId,           // Airtable Quick Deals recordId (recXXXX)
+      orderNumber,        // e.g. "ORD-002695"
+      productName,
+      sku,
+      size,
+      brand,
+      currentPayout,      // number
+      maxPayout,          // number
+      imageUrl            // optional
+    } = req.body || {};
+
+    if (!channelId || !recordId) {
+      return res.status(400).send('Missing channelId or recordId');
+    }
+
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) {
+      return res.status(404).send('Channel not found or not text-based');
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('⚡ Quick Deal')
+      .setDescription(
+        `**Order:** ${orderNumber || '-'}\n` +
+        `**Product:** ${productName || '-'}\n` +
+        `**SKU:** ${sku || '-'}\n` +
+        `**Size:** ${size || '-'}\n` +
+        `**Brand:** ${brand || '-'}`
+      )
+      .setColor(0xFFED00)
+      .addFields(
+        {
+          name: 'Current Payout',
+          value: currentPayout != null ? `€${Number(currentPayout).toFixed(2)}` : '-',
+          inline: true
+        },
+        {
+          name: 'Max Payout',
+          value: maxPayout != null ? `€${Number(maxPayout).toFixed(2)}` : '-',
+          inline: true
+        }
+      );
+
+    if (imageUrl) embed.setImage(imageUrl);
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`quick_claim_${recordId}`) // 🔑 used later by the claim modal
+        .setLabel('Claim Deal')
+        .setStyle(ButtonStyle.Success)
+    );
+
+    const msg = await channel.send({ embeds: [embed], components: [row] });
+
+    const guildId = process.env.GUILD_ID;
+    const messageUrl = guildId
+      ? `https://discord.com/channels/${guildId}/${channelId}/${msg.id}`
+      : null;
+
+    // 🔹 Store everything directly in the Quick Deals record on Airtable
+    try {
+      await base(QUICK_DEALS_TABLE).update(recordId, {
+        'Discord Channel ID': channelId,
+        'Discord Message ID': msg.id,
+        'Discord Message URL': messageUrl
+      });
+    } catch (e) {
+      console.warn('⚠️ Could not update Quick Deals record with Discord IDs:', e.message);
+    }
+
+    // Still return it for Make if you want to log/use it
+    return res.status(200).json({
+      ok: true,
+      channelId,
+      messageId: msg.id,
+      messageUrl
+    });
+  } catch (err) {
+    console.error('❌ Error creating Quick Deal embed:', err);
+    return res.status(500).send('Internal Server Error');
+  }
+});
+
+//
 // 🔹 QUICK DEAL: dynamic embed updater
 //
 app.post('/quick-deal/update-embed', async (req, res) => {
