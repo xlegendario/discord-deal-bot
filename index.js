@@ -249,15 +249,32 @@ app.post('/quick-deal/create', async (req, res) => {
  */
 app.post('/quick-deal/update-embed', async (req, res) => {
   try {
-    const { channelId, messageId, currentPayout, maxPayout } = req.body || {};
+    const {
+      channelId,
+      messageId,
+      currentPayout,
+      maxPayout,
+      recordId,          // 👈 NEW: Unfulfilled Orders Log recId
+      timeToMaxPayout    // optional override; usually we will pull from Airtable
+    } = req.body || {};
 
     const targetChannelId = channelId || QUICK_DEALS_CHANNEL_ID;
 
     if (!targetChannelId || !messageId) {
       return res.status(400).send('Missing QUICK_DEALS_CHANNEL_ID or messageId');
     }
-    if (!GUILD_ID) {
-      return res.status(400).send('Missing GUILD_ID env');
+
+    // 👇 Pull latest "Payout Countdown" from Airtable if recordId is given
+    let finalTimeToMax = timeToMaxPayout;
+    if (recordId && !finalTimeToMax) {
+      try {
+        const rec = await base('Unfulfilled Orders Log').find(recordId);
+        if (rec) {
+          finalTimeToMax = rec.get('Payout Countdown'); // field name in Airtable
+        }
+      } catch (e) {
+        console.warn('⚠️ Could not fetch Payout Countdown:', e.message);
+      }
     }
 
     const guild = await client.guilds.fetch(GUILD_ID);
@@ -291,6 +308,13 @@ app.post('/quick-deal/update-embed', async (req, res) => {
     }
     if (maxPayout != null) {
       setField('Max Payout', String(maxPayout));
+    }
+
+    // 👇 Always refresh Time to Max Payout
+    if (finalTimeToMax != null && finalTimeToMax !== '') {
+      setField('Time to Max Payout', String(finalTimeToMax));
+    } else {
+      setField('Time to Max Payout', '-');
     }
 
     newEmbed.setFields(fields);
