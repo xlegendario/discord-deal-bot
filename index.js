@@ -280,16 +280,9 @@ app.post('/quick-deal/create-partners', async (req, res) => {
     const partners = await getActiveQuickDealPartners();
     if (!partners.length) return res.status(200).json({ ok: true, message: 'No active Quick Deals partners with webhook URLs found' });
 
-    const embedObj = {
+    const embedMain = {
       title: '⚡ Quick Deal',
-      description:
-        `**${productName || '-'}**\n` +
-        `${sku || '-'}\n` +
-        `${size || '-'}\n` +
-        `${brand || '-'}\n\n` +
-        `The Claim link below will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})\n\n` +
-        `Claim Deal 👉 [click here](${finalClaimUrl})\n\n` +
-        `To see al WTB's 👉 [click here](${QUICK_DEALS_AIRTABLE_URL})`,
+      description: `**${productName || '-'}**\n${sku || '-'}\n${size || '-'}\n${brand || '-'}`,
       color: 0xffed00,
       fields: [
         { name: 'Current Payout', value: currentPayout != null ? String(currentPayout) : '-', inline: true },
@@ -301,11 +294,19 @@ app.post('/quick-deal/create-partners', async (req, res) => {
         }
       ]
     };
-    if (imageUrl) embedObj.image = { url: imageUrl };
 
-    // IMPORTANT: Webhooks won't show message components/buttons reliably → send links inside embed text.
+    if (imageUrl) embedMain.image = { url: imageUrl };
+
+    const embedLinks = {
+      description:
+        `Claim Deal 👉 [click here](${finalClaimUrl})\n` +
+        `To see al Quick Deals 👉 [click here](${QUICK_DEALS_AIRTABLE_URL})\n\n` +
+        `The Claim link below will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})`,
+      color: 0xffed00
+    };
+
     const payload = {
-      embeds: [embedObj]
+      embeds: [embedMain, embedLinks]
     };
 
     const partnerRefs = [];
