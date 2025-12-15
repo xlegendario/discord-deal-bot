@@ -431,23 +431,20 @@ app.post('/quick-deal/update-embed', async (req, res) => {
 
         if (refsRaw) {
           // Build webhook payload from the UPDATED embed
-          const embedJson = newEmbed.toJSON();
+          const embedMainJson = newEmbed.toJSON(); // keeps fields/image/etc
 
-          // Pull Claim Message URL from Airtable (needed for the embed link)
           const claimUrl = rec.get('Claim Message URL') || '';
 
-          const originalDesc = embedJson.description || '';
-          const linkBlock =
-            `\n\n` +
-            `The Claim link below will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})\n\n` +
-            (claimUrl ? `Claim Deal 👉 [click here](${claimUrl})\n\n` : '') +
-            `To see al WTB's 👉 [click here](${QUICK_DEALS_AIRTABLE_URL})`;
+          const embedLinks = {
+            description:
+              (claimUrl ? `Claim Deal 👉 [click here](${claimUrl})\n` : '') +
+              `To see al WTB's 👉 [click here](${QUICK_DEALS_AIRTABLE_URL})\n\n` +
+              `The Claim link below will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})`,
+            color: 0xffed00
+          };
 
-          embedJson.description = `${originalDesc}${linkBlock}`;
-
-          // IMPORTANT: Webhooks won't show message components/buttons reliably → update embed text only.
           const partnerPayload = {
-            embeds: [embedJson]
+            embeds: [embedMainJson, embedLinks]
           };
 
           const refs = String(refsRaw)
