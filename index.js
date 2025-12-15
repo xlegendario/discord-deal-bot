@@ -301,7 +301,7 @@ app.post('/quick-deal/create-partners', async (req, res) => {
       description:
         `Claim Deal 👉 [click here](${finalClaimUrl})\n` +
         `To see al Quick Deals 👉 [click here](${QUICK_DEALS_AIRTABLE_URL})\n\n` +
-        `The Claim link below will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})`,
+        `The Claim link above will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})`,
       color: 0xffed00
     };
 
@@ -439,7 +439,7 @@ app.post('/quick-deal/update-embed', async (req, res) => {
             description:
               (claimUrl ? `Claim Deal 👉 [click here](${claimUrl})\n` : '') +
               `To see al WTB's 👉 [click here](${QUICK_DEALS_AIRTABLE_URL})\n\n` +
-              `The Claim link below will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})`,
+              `The Claim link above will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})`,
             color: 0xffed00
           };
 
