@@ -21,6 +21,8 @@ const { createTranscript } = require('discord-html-transcripts');
 const QUICK_DEALS_AIRTABLE_URL =
   'https://airtable.com/invite/l?inviteId=invxw82cJp4JW5xGl&inviteToken=4b33dc79194fc583a1ebf24d84d38f92334304662e6ca9741b09132e6199adb3&utm_medium=email&utm_source=product_team&utm_content=transactional-alerts';
 
+const PARTNER_INVITE_URL = 'https://discord.gg/KcgsEJCCS7';
+
 /* ---------------- EXPRESS SETUP ---------------- */
 
 const app = express();
@@ -39,7 +41,12 @@ app.options(/.*/, cors());
 /* ---------------- DISCORD CLIENT ---------------- */
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers
+  ]
 });
 
 // crash guards
@@ -275,7 +282,14 @@ app.post('/quick-deal/create-partners', async (req, res) => {
 
     const embedObj = {
       title: '⚡ Quick Deal',
-      description: `**${productName || '-'}**\n${sku || '-'}\n${size || '-'}\n${brand || '-'}`,
+      description:
+        `**${productName || '-'}**\n` +
+        `${sku || '-'}\n` +
+        `${size || '-'}\n` +
+        `${brand || '-'}\n\n` +
+        `The Claim link below will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})\n\n` +
+        `Claim Deal 👉 [click here](${finalClaimUrl})\n\n` +
+        `To see al WTB's 👉 [click here](${QUICK_DEALS_AIRTABLE_URL})`,
       color: 0xffed00,
       fields: [
         { name: 'Current Payout', value: currentPayout != null ? String(currentPayout) : '-', inline: true },
@@ -289,17 +303,9 @@ app.post('/quick-deal/create-partners', async (req, res) => {
     };
     if (imageUrl) embedObj.image = { url: imageUrl };
 
+    // IMPORTANT: Webhooks won't show message components/buttons reliably → send links inside embed text.
     const payload = {
-      embeds: [embedObj],
-      components: [
-        {
-          type: 1,
-          components: [
-            { type: 2, style: 5, label: 'Claim Deal', url: finalClaimUrl },
-            { type: 2, style: 5, label: 'See All Quick Deals', url: QUICK_DEALS_AIRTABLE_URL }
-          ]
-        }
-      ]
+      embeds: [embedObj]
     };
 
     const partnerRefs = [];
@@ -426,22 +432,21 @@ app.post('/quick-deal/update-embed', async (req, res) => {
           // Build webhook payload from the UPDATED embed
           const embedJson = newEmbed.toJSON();
 
-          // Keep partner buttons as links (Claim → your server message, See All → Airtable)
-          // We need Claim URL, pull from Airtable record if possible
-          let claimUrl = rec.get('Claim Message URL');
-          if (!claimUrl) claimUrl = ''; // still ok; partner edit will work but button may be empty
+          // Pull Claim Message URL from Airtable (needed for the embed link)
+          const claimUrl = rec.get('Claim Message URL') || '';
 
+          const originalDesc = embedJson.description || '';
+          const linkBlock =
+            `\n\n` +
+            `The Claim link below will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})\n\n` +
+            (claimUrl ? `Claim Deal 👉 [click here](${claimUrl})\n\n` : '') +
+            `To see al WTB's 👉 [click here](${QUICK_DEALS_AIRTABLE_URL})`;
+
+          embedJson.description = `${originalDesc}${linkBlock}`;
+
+          // IMPORTANT: Webhooks won't show message components/buttons reliably → update embed text only.
           const partnerPayload = {
-            embeds: [embedJson],
-            components: [
-              {
-                type: 1,
-                components: [
-                  ...(claimUrl ? [{ type: 2, style: 5, label: 'Claim Deal', url: claimUrl }] : []),
-                  { type: 2, style: 5, label: 'See All Quick Deals', url: QUICK_DEALS_AIRTABLE_URL }
-                ]
-              }
-            ]
+            embeds: [embedJson]
           };
 
           const refs = String(refsRaw)
