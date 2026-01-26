@@ -65,7 +65,10 @@ const PORT = process.env.PORT || 3000;
 
 // Discord
 const GUILD_ID = process.env.GUILD_ID;
-const DEAL_CATEGORY_ID = process.env.CATEGORY_ID; // category for ORD-xxxx channels
+const DEAL_CATEGORY_IDS = (process.env.DEAL_CATEGORY_IDS || process.env.CATEGORY_ID || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 const QUICK_DEALS_CHANNEL_ID = process.env.QUICK_DEALS_CHANNEL_ID; // channel where Quick Deals listing embeds live
 const TRANSCRIPTS_CHANNEL_ID = process.env.TRANSCRIPTS_CHANNEL_ID;
 
@@ -143,6 +146,36 @@ function asText(v) {
   }
   return String(v);
 }
+
+async function pickCategoryWithSpace(guild, categoryIds) {
+  if (!Array.isArray(categoryIds) || categoryIds.length === 0) return null;
+
+  // Make sure cache is warm
+  await guild.channels.fetch();
+
+  // Count children per category
+  const counts = new Map(); // parentId -> number of channels
+  for (const ch of guild.channels.cache.values()) {
+    const parentId = ch.parentId;
+    if (!parentId) continue;
+    counts.set(parentId, (counts.get(parentId) || 0) + 1);
+  }
+
+  // Discord category max is 50
+  const MAX = 50;
+
+  for (const id of categoryIds) {
+    const cat = guild.channels.cache.get(id);
+    if (!cat) continue;
+    if (cat.type !== ChannelType.GuildCategory) continue;
+
+    const used = counts.get(id) || 0;
+    if (used < MAX) return cat;
+  }
+
+  return null;
+}
+
 
 /** Read active partners with a Quick Deals webhook URL */
 async function getActiveQuickDealPartners() {
@@ -634,17 +667,35 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       const guild = await client.guilds.fetch(GUILD_ID);
-      const category = await guild.channels.fetch(DEAL_CATEGORY_ID);
+
+      // Pick a category that still has room (<50 channels)
+      // Pick a category that still has room (<50 channels)
+      const pickedCategory = await pickCategoryWithSpace(guild, DEAL_CATEGORY_IDS);
+
+      console.log(
+        `📁 Deal category pick: ${pickedCategory ? `${pickedCategory.name} (${pickedCategory.id})` : 'NONE (all full)'}`
+      );
+
+      if (!pickedCategory) {
+        return interaction.reply({
+          content: '❌ All deal categories are full (50 channels each). Please contact staff to create a new category.',
+          ephemeral: true
+        });
+      }
 
       const channel = await guild.channels.create({
         name: `${orderNumber.toLowerCase()}`,
         type: ChannelType.GuildText,
-        parent: category?.id,
+        parent: pickedCategory.id,
         permissionOverwrites: [
           { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
           {
             id: interaction.user.id,
-            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.AttachFiles]
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.SendMessages,
+              PermissionsBitField.Flags.AttachFiles
+            ]
           }
         ]
       });
