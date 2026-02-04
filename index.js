@@ -72,6 +72,62 @@ const DEAL_CATEGORY_IDS = (process.env.DEAL_CATEGORY_IDS || process.env.CATEGORY
 const QUICK_DEALS_CHANNEL_ID = process.env.QUICK_DEALS_CHANNEL_ID; // channel where Quick Deals listing embeds live
 const TRANSCRIPTS_CHANNEL_ID = process.env.TRANSCRIPTS_CHANNEL_ID;
 
+// Brand → channel routing (Option A)
+const QUICK_DEALS_DEFAULT_CHANNEL_ID =
+  process.env.QUICK_DEALS_DEFAULT_CHANNEL_ID || process.env.QUICK_DEALS_CHANNEL_ID;
+
+function safeLower(s) {
+  return String(s || '').trim().toLowerCase();
+}
+
+// Optional: normalize common variations (keeps your mapping small)
+function normalizeBrand(brand) {
+  const b = safeLower(brand);
+  if (!b) return '';
+  if (b.includes('jordan')) return 'jordan';
+  if (b.includes('nike')) return 'nike';
+  if (b.includes('adidas')) return 'adidas';
+  if (b.includes('new balance')) return 'new balance';
+  if (b.includes('asics')) return 'asics';
+  if (b.includes('ugg')) return 'ugg';
+  return b;
+}
+
+function parseBrandChannelMap() {
+  const raw = process.env.QUICK_DEALS_BRAND_CHANNEL_MAP || '';
+  if (!raw) return new Map();
+
+  try {
+    const obj = JSON.parse(raw);
+    const map = new Map();
+
+    for (const [k, v] of Object.entries(obj || {})) {
+      if (!k || !v) continue;
+      map.set(normalizeBrand(k), String(v).trim());
+    }
+
+    return map;
+  } catch (e) {
+    console.warn('⚠️ QUICK_DEALS_BRAND_CHANNEL_MAP is not valid JSON:', e.message);
+    return new Map();
+  }
+}
+
+const BRAND_CHANNEL_MAP = parseBrandChannelMap();
+
+function pickQuickDealsChannelId(brand) {
+  const key = normalizeBrand(brand);
+  return BRAND_CHANNEL_MAP.get(key) || QUICK_DEALS_DEFAULT_CHANNEL_ID;
+}
+
+// If we only stored Claim Message URL, we can extract the channel id from it
+function extractChannelIdFromDiscordUrl(url) {
+  // https://discord.com/channels/<guildId>/<channelId>/<messageId>
+  const m = String(url || '').match(/discord\.com\/channels\/\d+\/(\d+)\/\d+/);
+  return m ? m[1] : null;
+}
+
+
 // (kept for backward compatibility, but no longer used by /quick-deal/create-partners)
 const PARTNER_QUICK_DEALS_CHANNEL_IDS = (process.env.PARTNER_QUICK_DEALS_CHANNEL_IDS || '')
   .split(',')
@@ -228,14 +284,23 @@ app.post('/quick-deal/create', async (req, res) => {
   try {
     const { recordId, orderNumber, productName, sku, size, brand, currentPayout, maxPayout, timeToMaxPayout, imageUrl } = req.body || {};
 
-    if (!QUICK_DEALS_CHANNEL_ID) return res.status(400).send('Missing QUICK_DEALS_CHANNEL_ID env');
+    const targetChannelId = pickQuickDealsChannelId(brand);
+
+    console.log(`📌 Quick Deal create: brand="${brand || ''}" -> channelId=${targetChannelId}`);
+
+    if (!targetChannelId) return res.status(400).send('Missing QUICK_DEALS_DEFAULT_CHANNEL_ID (or QUICK_DEALS_CHANNEL_ID)');
     if (!GUILD_ID) return res.status(400).send('Missing GUILD_ID env');
     if (!recordId) return res.status(400).send('Missing recordId');
-
+    
     const guild = await client.guilds.fetch(GUILD_ID);
-    const channel = await guild.channels.fetch(QUICK_DEALS_CHANNEL_ID);
+    const channel = await guild.channels.fetch(targetChannelId);
+    
+    if (!channel || !channel.isTextBased()) {
+      return res
+        .status(404)
+        .send(`Quick Deals target channel not found or not text-based (brand=${brand || '-'}, channelId=${targetChannelId})`);
+    }
 
-    if (!channel || !channel.isTextBased()) return res.status(404).send('Quick Deals channel not found or not text-based');
 
     const embed = new EmbedBuilder()
       .setTitle('⚡ Quick Deal')
@@ -261,7 +326,7 @@ app.post('/quick-deal/create', async (req, res) => {
 
     const msg = await channel.send({ embeds: [embed], components: [row] });
 
-    const messageUrl = `https://discord.com/channels/${GUILD_ID}/${QUICK_DEALS_CHANNEL_ID}/${msg.id}`;
+    const messageUrl = `https://discord.com/channels/${GUILD_ID}/${targetChannelId}/${msg.id}`;
 
     try {
       await base(ORDER_TABLE_NAME).update(recordId, {
@@ -274,10 +339,11 @@ app.post('/quick-deal/create', async (req, res) => {
 
     return res.status(200).json({
       ok: true,
-      channelId: QUICK_DEALS_CHANNEL_ID,
+      channelId: targetChannelId,
       messageId: msg.id,
       messageUrl
     });
+
   } catch (err) {
     console.error('❌ Error creating Quick Deal embed:', err);
     return res.status(500).send('Internal Server Error');
@@ -536,16 +602,21 @@ app.post('/quick-deal/disable', async (req, res) => {
     const { recordId } = req.body || {};
 
     if (!recordId) return res.status(400).send('Missing recordId');
-    if (!QUICK_DEALS_CHANNEL_ID) return res.status(400).send('Missing QUICK_DEALS_CHANNEL_ID env');
+    if (!QUICK_DEALS_DEFAULT_CHANNEL_ID && !QUICK_DEALS_CHANNEL_ID)
+      return res.status(400).send('Missing QUICK_DEALS_DEFAULT_CHANNEL_ID (or QUICK_DEALS_CHANNEL_ID)');
 
     const orderRecord = await base(ORDER_TABLE_NAME).find(recordId);
     const claimMessageId = orderRecord.get('Claim Message ID');
+    const claimMessageUrl = orderRecord.get('Claim Message URL');
+    const listingChannelId =
+      extractChannelIdFromDiscordUrl(claimMessageUrl) || QUICK_DEALS_DEFAULT_CHANNEL_ID || QUICK_DEALS_CHANNEL_ID;
+
     if (!claimMessageId) {
       return res.status(404).send('No Claim Message ID stored on this Unfulfilled Orders Log record');
     }
 
     const guild = await client.guilds.fetch(GUILD_ID);
-    const dealsChannel = await guild.channels.fetch(QUICK_DEALS_CHANNEL_ID);
+    const dealsChannel = await guild.channels.fetch(listingChannelId);
 
     if (!dealsChannel || !dealsChannel.isTextBased()) return res.status(404).send('Quick Deals channel not found or not text-based');
 
@@ -749,8 +820,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // disable Claim button on MAIN listing (partner messages are links)
       try {
         const claimMessageId = orderRecord.get('Claim Message ID');
-        if (claimMessageId && QUICK_DEALS_CHANNEL_ID) {
-          const dealsChannel = await client.channels.fetch(QUICK_DEALS_CHANNEL_ID);
+        const claimMessageUrl = orderRecord.get('Claim Message URL');
+      
+        // Determine which channel the listing message is actually in
+        const listingChannelId =
+          extractChannelIdFromDiscordUrl(claimMessageUrl) || QUICK_DEALS_DEFAULT_CHANNEL_ID || QUICK_DEALS_CHANNEL_ID;
+      
+        if (claimMessageId && listingChannelId) {
+          const dealsChannel = await client.channels.fetch(listingChannelId);
           if (dealsChannel && dealsChannel.isTextBased()) {
             const listingMsg = await dealsChannel.messages.fetch(claimMessageId).catch(() => null);
             if (listingMsg) {
@@ -759,11 +836,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 .setLabel('Claim Deal')
                 .setStyle(ButtonStyle.Secondary)
                 .setDisabled(true);
-
-              const seeAllButton = new ButtonBuilder().setLabel('See All Quick Deals').setStyle(ButtonStyle.Link).setURL(QUICK_DEALS_AIRTABLE_URL);
-
+      
+              const seeAllButton = new ButtonBuilder()
+                .setLabel('See All Quick Deals')
+                .setStyle(ButtonStyle.Link)
+                .setURL(QUICK_DEALS_AIRTABLE_URL);
+      
               const disabledRow = new ActionRowBuilder().addComponents(disabledClaim, seeAllButton);
-
+      
               await listingMsg.edit({ components: [disabledRow] });
             }
           }
@@ -946,9 +1026,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (data?.isQuickDeal) {
           const orderRecord = await base(ORDER_TABLE_NAME).find(recordId);
           const claimMessageId = orderRecord.get('Claim Message ID');
-
-          if (claimMessageId && QUICK_DEALS_CHANNEL_ID) {
-            const dealsChannel = await client.channels.fetch(QUICK_DEALS_CHANNEL_ID);
+          const claimMessageUrl = orderRecord.get('Claim Message URL');
+          
+          const listingChannelId =
+            extractChannelIdFromDiscordUrl(claimMessageUrl) || QUICK_DEALS_DEFAULT_CHANNEL_ID || QUICK_DEALS_CHANNEL_ID;
+          
+          if (claimMessageId && listingChannelId) {
+            const dealsChannel = await client.channels.fetch(listingChannelId);
             if (dealsChannel && dealsChannel.isTextBased()) {
               const listingMsg = await dealsChannel.messages.fetch(claimMessageId).catch(() => null);
               if (listingMsg) {
@@ -957,15 +1041,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
                   .setLabel('Claim Deal')
                   .setStyle(ButtonStyle.Success)
                   .setDisabled(false);
-
-                const seeAllButton = new ButtonBuilder().setLabel('See All Quick Deals').setStyle(ButtonStyle.Link).setURL(QUICK_DEALS_AIRTABLE_URL);
-
+          
+                const seeAllButton = new ButtonBuilder()
+                  .setLabel('See All Quick Deals')
+                  .setStyle(ButtonStyle.Link)
+                  .setURL(QUICK_DEALS_AIRTABLE_URL);
+          
                 const enabledRow = new ActionRowBuilder().addComponents(enabledClaim, seeAllButton);
-
+          
                 await listingMsg.edit({ components: [enabledRow] });
               }
             }
           }
+
         }
       } catch (e) {
         console.warn('⚠️ Could not re-enable Claim Deal button:', e.message);
