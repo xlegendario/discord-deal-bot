@@ -475,25 +475,48 @@ app.post('/quick-deal/create-partners', async (req, res) => {
  */
 app.post('/quick-deal/update-embed', async (req, res) => {
   try {
-    const { channelId, messageId, currentPayout, maxPayout, recordId, timeToMaxPayout } = req.body || {};
+    let { channelId, messageId, currentPayout, maxPayout, recordId, timeToMaxPayout } = req.body || {};
 
-    const targetChannelId = channelId || QUICK_DEALS_CHANNEL_ID;
-    if (!targetChannelId || !messageId) return res.status(400).send('Missing QUICK_DEALS_CHANNEL_ID or messageId');
-
-    // Optionally refresh Time to Max from Airtable
+    // ✅ Resolve correct channelId + messageId from Airtable (because listing is now posted in brand channels)
     let finalTimeToMax = timeToMaxPayout;
-    if (recordId && !finalTimeToMax) {
+
+    if (recordId) {
       try {
         const rec = await base(ORDER_TABLE_NAME).find(recordId);
-        if (rec) finalTimeToMax = rec.get('Payout Countdown');
+
+        // If Make didn't pass messageId, use Airtable stored one
+        if (!messageId) {
+          messageId = rec.get('Claim Message ID') || messageId;
+        }
+
+        // If Make didn't pass channelId, extract from Claim Message URL
+        if (!channelId) {
+          const claimUrl = rec.get('Claim Message URL');
+          channelId = extractChannelIdFromDiscordUrl(claimUrl) || channelId;
+        }
+
+        // If Time-to-max not provided, pull from Airtable
+        if (!finalTimeToMax) {
+          finalTimeToMax = rec.get('Payout Countdown') || finalTimeToMax;
+        }
       } catch (e) {
-        console.warn('⚠️ Could not fetch Payout Countdown:', e.message);
+        console.warn('⚠️ Could not resolve channel/message from Airtable:', e.message);
       }
+    }
+
+    const targetChannelId = channelId || QUICK_DEALS_CHANNEL_ID;
+    if (!targetChannelId || !messageId) {
+      return res.status(400).send('Missing channelId/messageId (and could not resolve via recordId)');
     }
 
     // ----- Update main Quick Deal embed in your server (unchanged) -----
     const guild = await client.guilds.fetch(GUILD_ID);
     const channel = await guild.channels.fetch(targetChannelId);
+
+    if (!channel || !channel.isTextBased()) {
+      return res.status(404).send('Channel not found or not text-based');
+    }
+
 
     if (!channel || !channel.isTextBased()) return res.status(404).send('Channel not found or not text-based');
 
