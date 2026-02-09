@@ -128,8 +128,6 @@ function registerMembersBackfill(ctx) {
               "Discord User ID": String(userId),
               "Discord Username": String(tag),
               "Discord Display Name": String(displayName),
-              "Is In Server": true,
-              "Last Seen At": new Date().toISOString(),
             },
           };
         });
