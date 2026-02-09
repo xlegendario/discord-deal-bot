@@ -23,7 +23,7 @@ const Airtable = require('airtable');
 const { createTranscript } = require('discord-html-transcripts');
 
 const QUICK_DEALS_AIRTABLE_URL =
-  'https://airtable.com/invite/l?inviteId=invxw82cJp4JW5xGl&inviteToken=4b33dc79194fc583a1ebf24d84d38f92334304662e6ca9741b09132e6199adb3&utm_medium=email&utm_source=product_team&utm_content=transactional-alerts';
+  'https://kickzcaviar.com/dl/527a5a';
 
 const PARTNER_INVITE_URL = 'https://discord.gg/KcgsEJCCS7';
 
