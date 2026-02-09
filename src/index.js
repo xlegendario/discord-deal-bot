@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const { registerAffiliateInvites } = require("./affiliateInvites");
+const { registerLeaderboards } = require("./leaderboards");
 const {
   Client,
   GatewayIntentBits,
@@ -61,6 +63,9 @@ client.on('error', (err) => {
 /* ---------------- AIRTABLE + ENV ---------------- */
 
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
+
+registerAffiliateInvites({ client, base, env: process.env });
+registerLeaderboards({ client, base, env: process.env });
 
 const PORT = process.env.PORT || 3000;
 
