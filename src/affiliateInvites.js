@@ -176,6 +176,68 @@ function registerAffiliateInvites(ctx) {
     if (existing) await existing.edit({ embeds: [embed], components: [row] }).catch(() => {});
     else await ch.send({ embeds: [embed], components: [row] }).catch(() => {});
   }
+  
+  // ---------- Affiliate Info message ----------
+  async function ensureAffiliateInfoMessage() {
+    const {
+      AFFILIATE_INFO_CHANNEL_ID,
+      AFFILIATE_INFO_PIN_MESSAGE = "true",
+    } = env;
+  
+    if (!AFFILIATE_INFO_CHANNEL_ID) return;
+  
+    const ch = await client.channels.fetch(String(AFFILIATE_INFO_CHANNEL_ID)).catch(() => null);
+    if (!ch || !ch.isTextBased()) {
+      console.warn("⚠️ AFFILIATE_INFO_CHANNEL_ID is not a text channel.");
+      return;
+    }
+  
+    const SHOULD_PIN = String(AFFILIATE_INFO_PIN_MESSAGE).toLowerCase() === "true";
+    const TITLE = "🤝 Affiliate Program — What It Is & How It Works";
+  
+    const embed = new EmbedBuilder()
+      .setTitle(TITLE)
+      .setColor(0xffd300)
+      .setDescription(
+        [
+          "**Leverage comes from buying together**",
+          "The more serious sellers we bring together, the more leverage we build.",
+          "That compounding power unlocks better payouts and better opportunities for everyone.",
+          "",
+          "**Why this program exists**",
+          "We grow the community by rewarding the people who genuinely help expand it.",
+          "",
+          "**How you earn**",
+          "• Earn **€5** for each invited member who completes their **first deal**",
+          "• Earnings are calculated monthly",
+          "",
+          "**How to join**",
+          "1) Click **Get my Invite URL** in the affiliate channel",
+          "2) Share your personal invite link",
+          "3) Invites are tracked automatically",
+          "",
+          "**Important**",
+          "• No spam or fake accounts",
+          "• Abuse results in removal from the program",
+        ].join("\n")
+      )
+      .setFooter({ text: "Payout by Kickz Caviar" });
+  
+    const recent = await ch.messages.fetch({ limit: 25 }).catch(() => null);
+    const existing = recent?.find(
+      (m) => m.author?.id === client.user.id && m.embeds?.[0]?.title === TITLE
+    );
+  
+    if (existing) {
+      await existing.edit({ embeds: [embed], content: null }).catch(() => {});
+      if (SHOULD_PIN && !existing.pinned) await existing.pin().catch(() => {});
+      return;
+    }
+  
+    const msg = await ch.send({ embeds: [embed] }).catch(() => null);
+    if (msg && SHOULD_PIN) await msg.pin().catch(() => {});
+  }
+
 
   // ---------- Create or reuse personal invite ----------
   async function getOrCreatePersonalInvite(guild, user) {
@@ -212,8 +274,8 @@ function registerAffiliateInvites(ctx) {
   client.once(Events.ClientReady, async () => {
     try {
       await ensureAffiliateMessage();
-
-      // Warm cache
+      await ensureAffiliateInfoMessage(); // ✅ ADD THIS
+  
       if (AFFILIATE_GUILD_ID) {
         const g = await client.guilds.fetch(String(AFFILIATE_GUILD_ID)).catch(() => null);
         if (g) await refreshInviteCacheForGuild(g);
@@ -222,8 +284,7 @@ function registerAffiliateInvites(ctx) {
           await refreshInviteCacheForGuild(g);
         }
       }
-
-      // Periodic refresh (only when locked)
+  
       setInterval(async () => {
         try {
           if (!AFFILIATE_GUILD_ID) return;
@@ -233,7 +294,7 @@ function registerAffiliateInvites(ctx) {
           console.error("AI: periodic cache refresh failed:", e);
         }
       }, 60_000);
-
+  
       AI_READY = true;
       console.log("✅ Affiliate Invites module ready.");
     } catch (e) {
