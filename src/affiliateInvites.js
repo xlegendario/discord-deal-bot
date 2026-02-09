@@ -238,38 +238,6 @@ function registerAffiliateInvites(ctx) {
     if (msg && SHOULD_PIN) await msg.pin().catch(() => {});
   }
 
-   // ---------- Welcome message upon joining ----------
-  async function sendWelcomeDM(member) {
-    const SELLER_ID_CHANNEL_ID = env.SELLER_ID_CHANNEL_ID;
-  
-    const lines = [
-      "👋 **Welcome to Kickz Caviar** — thanks for joining!",
-      "",
-      "This server is where sellers get access to:",
-      "• ⚡ Quick Deals",
-      "• 🤝 Want To Buys",
-      "• 💸 Fast payouts",
-      "",
-      "🚨 **Important before making any deal**",
-      "To claim or process **any deal**, you’ll need a **Seller ID**.",
-      "This is how we verify sellers and keep payouts smooth.",
-    ];
-  
-    if (SELLER_ID_CHANNEL_ID) {
-      lines.push("", "👉 Generate your Seller ID here:");
-      lines.push(`<#${SELLER_ID_CHANNEL_ID}>`);
-    }
-  
-    lines.push("", "Once that’s done, you’re ready to jump in.");
-    lines.push("", "If you ever have questions, just ask — welcome aboard 🤝");
-  
-    try {
-      await member.user.send({ content: lines.join("\n") });
-    } catch {
-      // DMs closed — this is normal and should not error
-    }
-  }
-
   // ---------- Create or reuse personal invite ----------
   async function getOrCreatePersonalInvite(guild, user) {
     const existing = await findMemberRecordByDiscordId(user.id);
@@ -410,9 +378,6 @@ function registerAffiliateInvites(ctx) {
     try {
       const guild = member.guild;
       if (!guildAllowed(guild.id)) return;
-      
-      // ✅ Send welcome DM (fire and forget)
-      sendWelcomeDM(member);
 
       console.log("AI JOIN: fired", member.user.id, member.user.tag, "guild", guild.id);
 
