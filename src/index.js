@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { registerAffiliateInvites } = require("./affiliateInvites");
 const { registerLeaderboards } = require("./leaderboards");
+const { registerMembersBackfill } = require("./backfillMembers");
 const {
   Client,
   GatewayIntentBits,
@@ -66,6 +67,8 @@ const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process
 
 registerAffiliateInvites({ client, base, env: process.env });
 registerLeaderboards({ client, base, env: process.env });
+registerMembersBackfill({ client, base, env: process.env });
+
 
 const PORT = process.env.PORT || 3000;
 
