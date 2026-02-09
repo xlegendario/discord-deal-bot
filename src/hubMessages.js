@@ -55,7 +55,9 @@ function registerHubMessages(ctx) {
       channelId: ALL_QUICK_DEALS_CHANNEL_ID,
       title: "⚡ Browse All Active Quick Deals",
       descriptionLines: [
-        "Quick Deals are instant, first-come, first-served opportunities with payouts that increase over time. Besides our Quick Deals channels on Discord, all our active Quick Deals can also be viewed in one place, including:",
+        "Quick Deals are instant, first-come, first-served opportunities with payouts that increase over time.",
+        "",
+        "Besides our Quick Deals channels on Discord, all our active Quick Deals can also be viewed in one place, including:",
         "",
         "• 🔎 Product • SKU • Size",
         "• 🪙 Current Payout",
@@ -82,7 +84,9 @@ function registerHubMessages(ctx) {
       channelId: ALL_WTBS_CHANNEL_ID,
       title: "🔥 Browse All Active WTB’s",
       descriptionLines: [
-        "We source a large number of items daily that you can provide. In addition to our Discord WTB channels, all active WTBs can also be browsed and offered on through our website, including:",
+        "We source a large number of items daily that you can provide",
+        "",
+        "In addition to our Discord WTB channels, all active WTBs can also be browsed and offered on through our website, including:",
         "",
         "• 🔎 Product • SKU • Size",
         "• 🪙 Current Lowest Offer / Starting Price",
