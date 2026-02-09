@@ -62,7 +62,7 @@ function registerHubMessages(ctx) {
         "• ⚡ Direct redirect link to claim",
         "",
         "Click below to view the full Quick Deals list and secure deals before someone else grabs them.",
-        "See an item you want to deal? Just click on the item and it redirects you to the "Claim Deal" Webhook here on Discord!",
+        "See an item you want to deal? Just click on the item and it redirects you to the **Claim Deal** Webhook here on Discord!",
         "",
         "**Remember:**",
         `You need a **Seller ID** to claim any Quick Deal. If you don’t have one yet, go to ${sellerReg} and create your profile in seconds!`,
