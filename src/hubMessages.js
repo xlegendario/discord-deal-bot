@@ -19,32 +19,74 @@ function registerHubMessages(ctx) {
     buttonUrl,
     color = 0xffd300,
   }) {
-    if (!channelId) return;
-
-    const ch = await client.channels.fetch(String(channelId)).catch(() => null);
-    if (!ch || !ch.isTextBased()) return;
-
+    if (!channelId) {
+      console.warn(`HUB: skipped "${title}" — channelId missing`);
+      return null;
+    }
+    if (!buttonUrl) {
+      console.warn(`HUB: skipped "${title}" — buttonUrl missing`);
+      return null;
+    }
+  
+    // Basic URL validation (Link button requires a valid URL)
+    try {
+      new URL(String(buttonUrl));
+    } catch (e) {
+      console.error(`HUB: skipped "${title}" — invalid URL:`, buttonUrl);
+      return null;
+    }
+  
+    console.log(`HUB: ensuring "${title}" in channel ${channelId}`);
+  
+    const ch = await client.channels.fetch(String(channelId)).catch((e) => {
+      console.error(`HUB: fetch channel failed for "${title}"`, e);
+      return null;
+    });
+    if (!ch) {
+      console.error(`HUB: channel not found for "${title}" (${channelId})`);
+      return null;
+    }
+    if (!ch.isTextBased()) {
+      console.error(`HUB: channel not text-based for "${title}" (${channelId}), type=${ch.type}`);
+      return null;
+    }
+  
     const embed = new EmbedBuilder()
       .setTitle(title)
       .setDescription(descriptionLines.join("\n"))
       .setColor(color);
-
+  
     const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setLabel(buttonLabel).setStyle(ButtonStyle.Link).setURL(buttonUrl)
+      new ButtonBuilder().setLabel(buttonLabel).setStyle(ButtonStyle.Link).setURL(String(buttonUrl))
     );
-
-    const recent = await ch.messages.fetch({ limit: 50 }).catch(() => null);
+  
+    const recent = await ch.messages.fetch({ limit: 50 }).catch((e) => {
+      console.error(`HUB: fetch messages failed for "${title}"`, e);
+      return null;
+    });
+  
     const existing = recent?.find(
       (m) => m.author?.id === client.user.id && m.embeds?.[0]?.title === title
     );
-
+  
     if (existing) {
-      await existing.edit({ embeds: [embed], components: [row] }).catch(() => {});
+      console.log(`HUB: editing existing message for "${title}" (${existing.id})`);
+      await existing.edit({ embeds: [embed], components: [row] }).catch((e) => {
+        console.error(`HUB: edit failed for "${title}"`, e);
+      });
       return existing;
-    } else {
-      return await ch.send({ embeds: [embed], components: [row] }).catch(() => null);
     }
+  
+    console.log(`HUB: sending new message for "${title}"`);
+    const sent = await ch.send({ embeds: [embed], components: [row] }).catch((e) => {
+      console.error(`HUB: send failed for "${title}"`, e);
+      return null;
+    });
+  
+    console.log(`HUB: send result for "${title}":`, sent?.id || "FAILED");
+    return sent;
   }
+
 
   async function ensureAllQuickDealsMessage() {
     if (!ALL_QUICK_DEALS_CHANNEL_ID || !QUICK_DEALS_WEBSITE_URL) return;
@@ -104,8 +146,17 @@ function registerHubMessages(ctx) {
   }
 
   client.once(Events.ClientReady, async () => {
+    console.log("HUB: ready; env check:", {
+      ALL_QUICK_DEALS_CHANNEL_ID,
+      ALL_WTBS_CHANNEL_ID,
+      QUICK_DEALS_WEBSITE_URL,
+      WTBS_WEBSITE_URL,
+      SELLER_REG_CHANNEL_ID,
+    });
+  
     await ensureAllQuickDealsMessage();
     await ensureAllWTBsMessage();
+  
     console.log("✅ Hub messages ensured (Quick Deals + WTBs).");
   });
 }
