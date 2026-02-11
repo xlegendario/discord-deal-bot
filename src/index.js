@@ -1479,15 +1479,12 @@ client.on(Events.MessageCreate, async (message) => {
   
       if (status === 'Store Fulfilled') {
         await message.author.send(
-          `⚠️ **Order ${orderNumber}**\n\n` +
-          `❌ Fulfillment Status is **Store Fulfilled**.\n` +
+          `❌ Order **${orderNumber}** is **Store Fulfilled**\n` +
           `This deal should **NOT** be confirmed.`
         );
       } else {
         await message.author.send(
-          `✅ **Order ${orderNumber}**\n\n` +
-          `Fulfillment Status: **${status}**\n` +
-          `This deal **can proceed normally**.`
+          `✅ **Order ${orderNumber}** can **proceed normally**` +
         );
       }
     } catch (err) {
