@@ -831,7 +831,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const embed = new EmbedBuilder()
         .setTitle('💸 Quick Deal Claimed')
         .setDescription(
-          `**Order:** ${orderNumber}\n` +
+          `**Order:** ${orderId}\n` +
             `**Product:** ${productName}\n` +
             `**SKU:** ${finalSku}\n` +
             `**Size:** ${size}\n` +
