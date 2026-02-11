@@ -91,6 +91,23 @@ function safeLower(s) {
   return String(s || '').trim().toLowerCase();
 }
 
+function toChannelSlug(s) {
+  return String(s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9-]/g, '-') // only keep a-z 0-9 and -
+    .replace(/-+/g, '-')         // collapse multiple dashes
+    .replace(/^-|-$/g, '');      // trim leading/trailing dash
+}
+
+function getOrderIdFromChannelName(channelName) {
+  const raw = String(channelName || '').toUpperCase().trim(); // "ORD-00001-5678"
+  const parts = raw.split('-').filter(Boolean);              // ["ORD","00001","5678"]
+  if (parts.length >= 2) return `${parts[0]}-${parts[1]}`;   // "ORD-00001"
+  return raw;
+}
+
+
 // Optional: normalize common variations (keeps your mapping small)
 function normalizeBrand(brand) {
   const b = safeLower(brand);
@@ -170,6 +187,7 @@ const PARTNER_FIELD_WTB_WEBHOOK_FALLBACK = 'WTB Webhook URL';
 
 // In Unfulfilled Orders Log we will store: "partnerRecordId:messageId,partnerRecordId2:messageId2,..."
 const ORDER_TABLE_NAME = 'Unfulfilled Orders Log';
+const ORDER_FIELD_CLAIMED_CHANNEL_ID = 'Claimed Channel ID';
 const ORDER_FIELD_PARTNER_QD_REFS = 'Partner Quick Deals Message IDs';
 
 /* ---------------- RUNTIME STATE ---------------- */
@@ -750,7 +768,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const orderRecordId = recordId;
       const orderRecord = await base(ORDER_TABLE_NAME).find(orderRecordId);
 
-      const orderNumber = String(orderRecord.get('Order ID') || '');
+      const orderId = String(orderRecord.get('Order ID') || '').trim();
+      const shopifyOrderNumber = String(orderRecord.get('Shopify Order Number') || '').trim(); // <-- change field name if your Airtable uses another label
+
       const size = orderRecord.get('Size') || '';
       const brand = orderRecord.get('Brand') || '';
       const productName = orderRecord.get('Product Name') ?? orderRecord.get('Shopify Product Name') ?? '';
@@ -767,13 +787,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const pictureField = orderRecord.get('Picture');
       const imageUrl = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
 
-      if (!orderNumber || !productName || !finalSku || !size || !brand || !Number.isFinite(payout) || payout <= 0) {
+      if (!orderId || !productName || !finalSku || !size || !brand || !Number.isFinite(payout) || payout <= 0) {
         return interaction.reply({ content: '❌ Missing or invalid order fields for this Quick Deal.', ephemeral: true });
       }
 
       const guild = await client.guilds.fetch(GUILD_ID);
 
-      // Pick a category that still has room (<50 channels)
       // Pick a category that still has room (<50 channels)
       const pickedCategory = await pickCategoryWithSpace(guild, DEAL_CATEGORY_IDS);
 
@@ -788,8 +807,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
       }
 
+      // Build channel name: Order ID + Shopify Order Number
+      const rawChannelName = shopifyOrderNumber ? `${orderId}-${shopifyOrderNumber}` : orderId;
+      const finalChannelName = toChannelSlug(rawChannelName).slice(0, 100);
+      
       const channel = await guild.channels.create({
-        name: `${orderNumber.toLowerCase()}`,
+        name: finalChannelName,
         type: ChannelType.GuildText,
         parent: pickedCategory.id,
         permissionOverwrites: [
@@ -905,7 +928,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     try {
       if (!data || !data.orderRecordId || !data.sellerRecordId) {
-        const orderNumber = interaction.channel.name.toUpperCase();
+        const orderNumber = getOrderIdFromChannelName(interaction.channel.name);
         const recs = await base(ORDER_TABLE_NAME)
           .select({
             filterByFormula: `{Order ID} = "${orderNumber}"`,
@@ -975,7 +998,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       try {
         let orderRecordId = data.orderRecordId;
         if (!orderRecordId) {
-          const orderNumber = interaction.channel.name.toUpperCase();
+          const orderNumber = getOrderIdFromChannelName(interaction.channel.name);
           const recs = await base(ORDER_TABLE_NAME)
             .select({
               filterByFormula: `{Order ID} = "${orderNumber}"`,
@@ -1043,7 +1066,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       let recordId = data?.orderRecordId;
 
       if (!recordId) {
-        const orderNumber = channel.name.toUpperCase();
+        const orderNumber = getOrderIdFromChannelName(channel.name);
         const records = await base(ORDER_TABLE_NAME)
           .select({
             filterByFormula: `{Order ID} = "${orderNumber}"`,
@@ -1104,7 +1127,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         'Claimed Seller VAT Type': null
       });
 
-      const orderNumber = channel.name.toUpperCase();
+      const orderNumber = getOrderIdFromChannelName(channel.name);
       const invRecords = await base('Inventory Units')
         .select({
           filterByFormula: `{Ticket Number} = "${orderNumber}"`,
@@ -1174,7 +1197,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     let sellerData = sellerMap.get(channel.id);
     if (!sellerData) {
-      const orderNumber = channel.name.toUpperCase();
+      const orderNumber = getOrderIdFromChannelName(channel.name);
       const recs = await base(ORDER_TABLE_NAME)
         .select({
           filterByFormula: `{Order ID} = "${orderNumber}"`,
@@ -1338,7 +1361,7 @@ client.on(Events.MessageCreate, async (message) => {
   if (message.channel.name.toUpperCase().startsWith('ORD-') && message.attachments.size > 0) {
     let data = sellerMap.get(message.channel.id);
     if (!data?.sellerRecordId) {
-      const orderNumber = message.channel.name.toUpperCase();
+      const orderNumber = getOrderIdFromChannelName(message.channel.name);
       const recs = await base(ORDER_TABLE_NAME)
         .select({
           filterByFormula: `{Order ID} = "${orderNumber}"`,
@@ -1390,6 +1413,43 @@ client.on(Events.MessageCreate, async (message) => {
     }
   }
 
+  if (message.content === '!close' && message.channel.name.toLowerCase().startsWith('ord-')) {
+    const memberRoles = message.member.roles.cache.map((r) => r.id);
+    const isAdmin = ADMIN_ROLE_IDS.some((id) => id && memberRoles.includes(id));
+    if (!isAdmin) return message.reply('❌ You are not authorized to use this command.');
+  
+    await message.channel.send(
+      `⚠️ **Alert!**\n\n` +
+      `😭  Not possible to confirm the deal, the order is already **fulfilled by client** or has some other error.\n\n` +
+      `➡️  We wait you on a next deal.\n\n` +
+      `🕒 **This channel will be deleted shortly.**`
+    );
+  
+    // shorter delay than !finish (e.g. 30 seconds)
+    setTimeout(async () => {
+      try {
+        const transcriptFileName = `transcript-${message.channel.name}.html`;
+        const transcript = await createTranscript(message.channel, {
+          limit: -1,
+          returnBuffer: false,
+          fileName: transcriptFileName
+        });
+  
+        const transcriptsChannel = await client.channels.fetch(TRANSCRIPTS_CHANNEL_ID);
+        if (transcriptsChannel && transcriptsChannel.isTextBased()) {
+          await transcriptsChannel.send({
+            content: `🗒️ Transcript for **closed (warehouse fulfilled)** deal **${message.channel.name}**`,
+            files: [transcript]
+          });
+        }
+  
+        await message.channel.delete();
+      } catch (err) {
+        console.error(`❌ Error closing deal ${message.channel.name}:`, err);
+      }
+    }, 300000); // 5 mins
+  }
+  
   if (message.content === '!finish' && message.channel.name.toLowerCase().startsWith('ord-')) {
     const memberRoles = message.member.roles.cache.map((r) => r.id);
     const isAdmin = ADMIN_ROLE_IDS.some((id) => id && memberRoles.includes(id));
