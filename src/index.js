@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const fetch = require('node-fetch');
 const cors = require('cors');
 const { registerAffiliateInvites } = require("./affiliateInvites");
 const { registerLeaderboards } = require("./leaderboards");
@@ -25,7 +26,7 @@ const { createTranscript } = require('discord-html-transcripts');
 const QUICK_DEALS_AIRTABLE_URL =
   'https://kickzcaviar.com/dl/527a5a';
 
-const PARTNER_INVITE_URL = 'https://discord.gg/KcgsEJCCS7';
+const PARTNER_INVITE_URL = 'https://discord.gg/GZY9NBpYUS';
 
 /* ---------------- EXPRESS SETUP ---------------- */
 
@@ -188,7 +189,8 @@ const PARTNER_FIELD_WTB_WEBHOOK_FALLBACK = 'WTB Webhook URL';
 // In Unfulfilled Orders Log we will store: "partnerRecordId:messageId,partnerRecordId2:messageId2,..."
 const ORDER_TABLE_NAME = 'Unfulfilled Orders Log';
 const ORDER_FIELD_CLAIMED_CHANNEL_ID = 'Claimed Channel ID';
-const ORDER_FIELD_PARTNER_QD_REFS = 'Partner Quick Deals Message IDs';
+const PARTNER_FIELD_LAST_QD_POST_AT = 'Last Post At';
+const PARTNER_FIELD_INVITE_URL = 'Invite URL';
 
 /* ---------------- RUNTIME STATE ---------------- */
 
@@ -275,14 +277,17 @@ async function getActiveQuickDealPartners() {
       const qd = rec.get(PARTNER_FIELD_QD_WEBHOOK);
       const fallback = rec.get(PARTNER_FIELD_WTB_WEBHOOK_FALLBACK);
       const webhookUrl = (qd && String(qd).trim()) || (fallback && String(fallback).trim()) || '';
+
       return {
         id: rec.id,
         name: rec.get('Name') || rec.id,
-        webhookUrl
+        webhookUrl,
+        inviteUrl: String(rec.get(PARTNER_FIELD_INVITE_URL) || '').trim()
       };
     })
     .filter((p) => !!p.webhookUrl);
 }
+
 
 /** Safely turn a webhook URL into a "PATCH message" URL */
 function webhookEditUrl(webhookUrl, messageId) {
@@ -389,110 +394,53 @@ app.post('/quick-deal/create', async (req, res) => {
  */
 app.post('/quick-deal/create-partners', async (req, res) => {
   try {
-    const { recordId, orderNumber, productName, sku, size, brand, currentPayout, maxPayout, timeToMaxPayout, imageUrl, claimMessageUrl } = req.body || {};
+    const { recordId, productName, sku, size, brand, imageUrl } = req.body || {};
 
-    if (!recordId) return res.status(400).send('Missing recordId');
-
-    // If claimMessageUrl not provided, try to pull from Airtable
-    let finalClaimUrl = claimMessageUrl;
-    if (!finalClaimUrl) {
-      try {
-        const rec = await base(ORDER_TABLE_NAME).find(recordId);
-        finalClaimUrl = rec.get('Claim Message URL');
-      } catch (e) {
-        console.warn('⚠️ Could not fetch Claim Message URL from Airtable:', e.message);
-      }
-    }
-    if (!finalClaimUrl) return res.status(400).send('Missing claimMessageUrl and no Claim Message URL in Airtable');
+    if (!recordId) return res.status(400).json({ error: 'Missing recordId' });
 
     const partners = await getActiveQuickDealPartners();
-    if (!partners.length) return res.status(200).json({ ok: true, message: 'No active Quick Deals partners with webhook URLs found' });
-
-    const embedMain = {
-      title: '⚡ Quick Deal',
-      description: `**${productName || '-'}**\n${sku || '-'}\n${size || '-'}\n${brand || '-'}`,
-      color: 0xffed00,
-      fields: [
-        { name: 'Current Payout', value: currentPayout != null ? String(currentPayout) : '-', inline: true },
-        { name: 'Max Payout', value: maxPayout != null ? String(maxPayout) : '-', inline: true },
-        {
-          name: 'Time to Max Payout',
-          value: timeToMaxPayout != null && timeToMaxPayout !== '' ? String(timeToMaxPayout) : '-',
-          inline: false
-        }
-      ]
-    };
-
-    if (imageUrl) embedMain.image = { url: imageUrl };
-
-    const embedLinks = {
-      description:
-        `Claim Deal 👉 [click here](${finalClaimUrl})\n\n` +
-        `To see al Quick Deals 👉 [click here](${QUICK_DEALS_AIRTABLE_URL})\n\n` +
-        `The Claim link above will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})`,
-      color: 0xffed00
-    };
-
-    const payload = {
-      embeds: [embedMain, embedLinks]
-    };
-
-    const partnerRefs = [];
-    const results = [];
+    if (!partners.length) return res.json({ ok: true, message: 'No active Quick Deal partners found' });
 
     for (const partner of partners) {
-      try {
-        const resp = await fetch(`${partner.webhookUrl.split('?')[0]}?wait=true`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        }).catch((err) => {
-          console.error('Error sending partner Quick Deal webhook:', err);
-          return null;
-        });
+      const inviteUrl = partner.inviteUrl || PARTNER_INVITE_URL;
 
-        if (!resp || !resp.ok) {
-          console.warn(`⚠️ Failed sending Quick Deal to partner ${partner.name}`);
-          results.push({ partnerId: partner.id, ok: false });
-          continue;
-        }
+      const embed = {
+        title: '🔥 NEW WTB 🔥',
+        color: 0xffed00,
+        description:
+          `**${productName || '-'}**\n` +
+          `SKU: ${sku || '-'}\n` +
+          `Size: ${size || '-'}\n` +
+          `Brand: ${brand || '-'}\n\n` +
+          `**Join server:** 👉 [click here](${inviteUrl})`,
+        ...(imageUrl ? { image: { url: imageUrl } } : {})
+      };
 
-        const data = await resp.json().catch(() => ({}));
-        const messageId = data.id;
+      const webhookUrl = String(partner.webhookUrl || '').split('?')[0];
 
-        if (messageId) {
-          partnerRefs.push(`${partner.id}:${messageId}`);
-          results.push({ partnerId: partner.id, ok: true, messageId });
-        } else {
-          results.push({ partnerId: partner.id, ok: false, reason: 'No message id returned' });
-        }
-      } catch (e) {
-        console.warn(`⚠️ Failed to send Quick Deal to partner ${partner.name}:`, e.message);
-        results.push({ partnerId: partner.id, ok: false, reason: e.message });
+      const resp = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ embeds: [embed] })
+      }).catch(() => null);
+
+      if (!resp || !resp.ok) {
+        console.warn(`⚠️ Quick Deal webhook failed for partner ${partner.name} (${partner.id})`);
+        continue;
       }
+
+      await base(PARTNERS_TABLE_NAME)
+        .update(partner.id, { [PARTNER_FIELD_LAST_QD_POST_AT]: new Date().toISOString() })
+        .catch(() => null);
     }
 
-    // Store references in Airtable so /update-embed can sync partner messages
-    if (partnerRefs.length) {
-      try {
-        await base(ORDER_TABLE_NAME).update(recordId, {
-          [ORDER_FIELD_PARTNER_QD_REFS]: partnerRefs.join(',')
-        });
-      } catch (e) {
-        console.warn('⚠️ Could not save Partner Quick Deals Message IDs:', e.message);
-      }
-    }
-
-    return res.status(200).json({
-      ok: true,
-      partnerMessages: partnerRefs,
-      results
-    });
+    return res.json({ ok: true });
   } catch (err) {
-    console.error('❌ Error creating partner Quick Deal embeds:', err);
-    return res.status(500).send('Internal Server Error');
+    console.error('❌ Error in /quick-deal/create-partners:', err);
+    return res.status(500).json({ error: 'Internal error' });
   }
 });
+
 
 /**
  * POST /quick-deal/update-embed
