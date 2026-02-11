@@ -407,6 +407,9 @@ app.post('/quick-deal/create-partners', async (req, res) => {
       const embed = {
         title: '🔥 NEW WTB 🔥',
         color: 0xffed00,
+        thumbnail: {
+          url: 'https://i.imgur.com/gRmfHif.png'
+        },
         description:
           `**${productName || '-'}**\n` +
           `SKU: ${sku || '-'}\n` +
@@ -414,6 +417,10 @@ app.post('/quick-deal/create-partners', async (req, res) => {
           `Brand: ${brand || '-'}\n\n` +
           `**Sell Now:** [click here](${inviteUrl})`,
         ...(imageUrl ? { image: { url: imageUrl } } : {})
+        footer: {
+          text: 'Kickz Caviar',
+          icon_url: 'https://i.imgur.com/gRmfHif.png'
+        }
       };
 
       const webhookUrl = String(partner.webhookUrl || '').split('?')[0];
