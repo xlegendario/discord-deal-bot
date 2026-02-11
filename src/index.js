@@ -412,7 +412,7 @@ app.post('/quick-deal/create-partners', async (req, res) => {
           `SKU: ${sku || '-'}\n` +
           `Size: ${size || '-'}\n` +
           `Brand: ${brand || '-'}\n\n` +
-          `**Join server:** 👉 [click here](${inviteUrl})`,
+          `**Sell Now:** [click here](${inviteUrl})`,
         ...(imageUrl ? { image: { url: imageUrl } } : {})
       };
 
