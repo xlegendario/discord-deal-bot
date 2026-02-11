@@ -1451,6 +1451,52 @@ client.on(Events.MessageCreate, async (message) => {
       }
     }, 300000); // 5 mins
   }
+
+  if (message.content === '!check' && message.channel.name.toLowerCase().startsWith('ord-')) {
+    const memberRoles = message.member.roles.cache.map((r) => r.id);
+    const isAdmin = ADMIN_ROLE_IDS.some((id) => id && memberRoles.includes(id));
+    if (!isAdmin) return message.reply('❌ You are not authorized to use this command.');
+  
+    // delete the command message (clean UX)
+    await message.delete().catch(() => {});
+  
+    try {
+      const orderNumber = getOrderIdFromChannelName(message.channel.name);
+  
+      const recs = await base(ORDER_TABLE_NAME)
+        .select({
+          filterByFormula: `{Order ID} = "${orderNumber}"`,
+          maxRecords: 1
+        })
+        .firstPage();
+  
+      if (!recs.length) {
+        return message.author.send(`❌ No order record found for **${orderNumber}**.`);
+      }
+  
+      const rec = recs[0];
+      const status = rec.get('Fulfillment Status') || '—';
+  
+      if (status === 'Store Fulfilled') {
+        await message.author.send(
+          `⚠️ **Order ${orderNumber}**\n\n` +
+          `❌ Fulfillment Status is **Store Fulfilled**.\n` +
+          `This deal should **NOT** be confirmed.`
+        );
+      } else {
+        await message.author.send(
+          `✅ **Order ${orderNumber}**\n\n` +
+          `Fulfillment Status: **${status}**\n` +
+          `This deal **can proceed normally**.`
+        );
+      }
+    } catch (err) {
+      console.error('!check command failed:', err);
+      try {
+        await message.author.send('❌ Error while checking Fulfillment Status.');
+      } catch (_) {}
+    }
+  }
   
   if (message.content === '!finish' && message.channel.name.toLowerCase().startsWith('ord-')) {
     const memberRoles = message.member.roles.cache.map((r) => r.id);
