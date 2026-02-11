@@ -1484,7 +1484,7 @@ client.on(Events.MessageCreate, async (message) => {
         );
       } else {
         await message.author.send(
-          `✅ **Order ${orderNumber}** can **proceed normally**` +
+          `✅ **Order ${orderNumber}** can **proceed normally**`
         );
       }
     } catch (err) {
