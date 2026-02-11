@@ -417,8 +417,8 @@ app.post('/quick-deal/create-partners', async (req, res) => {
           `**Sell Now:** [click here](${inviteUrl})`,
         ...(imageUrl ? { image: { url: imageUrl } } : {}),
         footer: {
-          text: 'Kickz Caviar',
-          icon_url: 'https://i.imgur.com/gRmfHif.png'
+          text: '© 2026 Kickz Caviar — All rights reserved',
+          icon_url: 'https://i.imgur.com/JOFvdG2.png'
         }
       };
 
