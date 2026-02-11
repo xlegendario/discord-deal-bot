@@ -79,6 +79,15 @@ function registerAffiliateInvites(ctx) {
     return ch;
   }
 
+  async function getInviteTargetChannel(guild) {
+    const targetId = String(env.AFFILIATE_INVITE_TARGET_CHANNEL_ID || "").trim();
+    if (!targetId) return null;
+  
+    const ch = await guild.channels.fetch(targetId).catch(() => null);
+    if (!ch || !ch.isTextBased()) return null;
+    return ch;
+  }
+
   // ---------- Airtable helpers ----------
   async function findMemberRecordByDiscordId(discordId) {
     const id = normId(discordId);
@@ -250,26 +259,29 @@ function registerAffiliateInvites(ctx) {
       await refreshInviteCacheForGuild(guild);
       return { url: existingUrl, code: existing?.fields?.["Invite Code"] || "" };
     }
-
-    const ch = await getAffiliateChannel(guild);
-    if (!ch) throw new Error("Affiliate channel not found / not text-based.");
-
+  
+    const ch =
+      (await getInviteTargetChannel(guild)) ||
+      (await getAffiliateChannel(guild)); // fallback if target not set
+  
+    if (!ch) throw new Error("Invite target channel not found / not text-based.");
+  
     const invite = await ch.createInvite({
       maxAge: 0,
       maxUses: 0,
       unique: true,
       reason: `Affiliate personal invite for ${user.tag} (${user.id})`,
     });
-
+  
     await upsertMember(user.id, user.tag, {
       "Invite Code": invite.code,
       "Invite URL": invite.url,
       "Invite Created At": new Date().toISOString(),
     });
-
+  
     // Seed cache
     await refreshInviteCacheForGuild(guild);
-
+  
     return { url: invite.url, code: invite.code };
   }
 
