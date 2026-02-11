@@ -729,7 +729,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.showModal(modal);
     } catch (err) {
       if (err.code === 10062) {
-        await interaction.channel.send({ content: '⚠️ That Quick Deal button expired. Please use a fresh one if available.' });
+        await interaction.channel.send({ content: '⚠️ That Quick Deal button expired. Please use a fresh one if available.', ephemeral: true });
         return;
       }
       console.error('quick_claim showModal failed:', err);
@@ -1417,6 +1417,8 @@ client.on(Events.MessageCreate, async (message) => {
     const memberRoles = message.member.roles.cache.map((r) => r.id);
     const isAdmin = ADMIN_ROLE_IDS.some((id) => id && memberRoles.includes(id));
     if (!isAdmin) return message.reply('❌ You are not authorized to use this command.');
+
+    await message.delete().catch(() => {});
   
     await message.channel.send(
       `⚠️ **Alert!**\n\n` +
@@ -1454,6 +1456,9 @@ client.on(Events.MessageCreate, async (message) => {
     const memberRoles = message.member.roles.cache.map((r) => r.id);
     const isAdmin = ADMIN_ROLE_IDS.some((id) => id && memberRoles.includes(id));
     if (!isAdmin) return message.reply('❌ You are not authorized to use this command.');
+
+    // 🧹 delete the command message
+    await message.delete().catch(() => {});
 
     await message.channel.send(
       '✅ This deal is now finished. Thank you for this deal — we look forward to dealing with you again!\n🕒 This ticket will automatically close in 1 hour.'
