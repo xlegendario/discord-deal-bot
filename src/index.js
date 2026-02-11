@@ -1,6 +1,5 @@
 require('dotenv').config();
 const express = require('express');
-const fetch = require('node-fetch');
 const cors = require('cors');
 const { registerAffiliateInvites } = require("./affiliateInvites");
 const { registerLeaderboards } = require("./leaderboards");
