@@ -407,7 +407,7 @@ app.post('/quick-deal/create-partners', async (req, res) => {
         title: '🔥 NEW WTB 🔥',
         color: 0xffed00,
         thumbnail: {
-          url: 'https://i.imgur.com/gRmfHif.png'
+          url: 'https://i.imgur.com/JOFvdG2.png'
         },
         description:
           `**${productName || '-'}**\n` +
