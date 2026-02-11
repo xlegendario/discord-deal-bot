@@ -417,8 +417,7 @@ app.post('/quick-deal/create-partners', async (req, res) => {
           `**Sell Now:** [click here](${inviteUrl})`,
         ...(imageUrl ? { image: { url: imageUrl } } : {}),
         footer: {
-          text: '© 2026 Kickz Caviar — All rights reserved',
-          icon_url: 'https://i.imgur.com/JOFvdG2.png'
+          text: '© 2026 Kickz Caviar — All rights reserved'
         }
       };
 
@@ -492,7 +491,7 @@ app.post('/quick-deal/update-embed', async (req, res) => {
       return res.status(400).send('Missing channelId/messageId (and could not resolve via recordId)');
     }
 
-    // ----- Update main Quick Deal embed in your server (unchanged) -----
+    // ----- Update main Quick Deal embed in your server -----
     const guild = await client.guilds.fetch(GUILD_ID);
     const channel = await guild.channels.fetch(targetChannelId);
 
@@ -500,11 +499,10 @@ app.post('/quick-deal/update-embed', async (req, res) => {
       return res.status(404).send('Channel not found or not text-based');
     }
 
-
-    if (!channel || !channel.isTextBased()) return res.status(404).send('Channel not found or not text-based');
-
-    const msg = await channel.messages.fetch(messageId);
-    if (!msg || !msg.embeds || msg.embeds.length === 0) return res.status(404).send('Message or embed not found');
+    const msg = await channel.messages.fetch(messageId).catch(() => null);
+    if (!msg || !msg.embeds || msg.embeds.length === 0) {
+      return res.status(404).send('Message or embed not found');
+    }
 
     const oldEmbed = msg.embeds[0];
     const newEmbed = EmbedBuilder.from(oldEmbed);
@@ -525,70 +523,8 @@ app.post('/quick-deal/update-embed', async (req, res) => {
 
     newEmbed.setFields(fields);
 
-    // Update main Quick Deal embed
+    // ✅ Update ONLY main Quick Deal embed
     await msg.edit({ embeds: [newEmbed] });
-
-    // ----- Update partner messages via webhooks -----
-    if (recordId) {
-      try {
-        const rec = await base(ORDER_TABLE_NAME).find(recordId);
-        const refsRaw = rec.get(ORDER_FIELD_PARTNER_QD_REFS);
-
-        if (refsRaw) {
-          // Build webhook payload from the UPDATED embed
-          const embedMainJson = newEmbed.toJSON(); // keeps fields/image/etc
-
-          const claimUrl = rec.get('Claim Message URL') || '';
-
-          const embedLinks = {
-            description:
-              (claimUrl ? `Claim Deal 👉 [click here](${claimUrl})\n\n` : '') +
-              `To see al WTB's 👉 [click here](${QUICK_DEALS_AIRTABLE_URL})\n\n` +
-              `The Claim link above will only work if you're already in the server, so join first & registrate as a Seller 👉 [click here](${PARTNER_INVITE_URL})`,
-            color: 0xffed00
-          };
-
-          const partnerPayload = {
-            embeds: [embedMainJson, embedLinks]
-          };
-
-          const refs = String(refsRaw)
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean);
-
-          // We need partner webhook urls; fetch active partners (includes fallback)
-          const partners = await getActiveQuickDealPartners();
-          const partnerById = new Map(partners.map((p) => [p.id, p]));
-
-          for (const ref of refs) {
-            const [partnerId, mid] = ref.split(':');
-            if (!partnerId || !mid) continue;
-
-            const partner = partnerById.get(partnerId);
-            if (!partner?.webhookUrl) continue;
-
-            try {
-              const editUrl = webhookEditUrl(partner.webhookUrl, mid);
-
-              const r = await fetch(editUrl, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(partnerPayload)
-              }).catch(() => null);
-
-              if (!r || !r.ok) {
-                console.warn(`⚠️ Could not update partner Quick Deal message for partner ${partnerId} (msg ${mid})`);
-              }
-            } catch (e) {
-              console.warn('⚠️ Could not update partner Quick Deal message:', e.message);
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('⚠️ Could not load Partner Quick Deals Messages for update:', e.message);
-      }
-    }
 
     return res.status(200).json({ ok: true });
   } catch (err) {
@@ -596,6 +532,7 @@ app.post('/quick-deal/update-embed', async (req, res) => {
     return res.status(500).send('Internal Server Error');
   }
 });
+
 
 /**
  * POST /quick-deal/disable
