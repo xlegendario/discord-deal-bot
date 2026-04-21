@@ -623,7 +623,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.showModal(modal);
     } catch (err) {
       if (err.code === 10062) {
-        await interaction.channel.send({ content: '⚠️ That Quick Deal button expired. Please use a fresh one if available.', flags: 64 });
+        await interaction.channel.send({
+          content: '⚠️ That Quick Deal button expired. Please use a fresh one if available.'
+        });
         return;
       }
       console.error('quick_claim showModal failed:', err);
