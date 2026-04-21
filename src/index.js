@@ -637,6 +637,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
   /* ---------- QUICK DEAL: modal submit (Seller ID + VAT) ---------- */
 
   if (interaction.isModalSubmit() && interaction.customId.startsWith('quick_claim_modal_')) {
+    await interaction.deferReply({ flags: 64 });
+  
     const recordId = interaction.customId.replace('quick_claim_modal_', '').trim();
     const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
     const vatRaw = interaction.fields.getTextInputValue('vat_type').trim().toLowerCase();
@@ -648,14 +650,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     else if (vatRaw === 'vat21' || vatRaw === '21' || vatRaw === '21%') vatType = 'VAT21';
     else if (vatRaw === 'vat0' || vatRaw === '0' || vatRaw === '0%') vatType = 'VAT0';
     else {
-      return interaction.reply({ content: '❌ Invalid VAT Type. Please use **Margin**, **VAT21** or **VAT0**.', ephemeral: true });
+      return interaction.editReply({ content: '❌ Invalid VAT Type. Please use **Margin**, **VAT21** or **VAT0**.' });
     }
 
     try {
       const sellerRecords = await base('Sellers Database').select({ filterByFormula: `{Seller ID} = "${sellerId}"`, maxRecords: 1 }).firstPage();
 
       if (sellerRecords.length === 0) {
-        return interaction.reply({ content: `❌ Seller ID **${sellerId}** not found.`, ephemeral: true });
+        return interaction.editReply({ content: `❌ Seller ID **${sellerId}** not found.` });
       }
       const sellerRecord = sellerRecords[0];
 
@@ -682,7 +684,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const imageUrl = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
 
       if (!orderId || !productName || !finalSku || !size || !brand || !Number.isFinite(payout) || payout <= 0) {
-        return interaction.reply({ content: '❌ Missing or invalid order fields for this Quick Deal.', ephemeral: true });
+        return interaction.editReply({ content: '❌ Missing or invalid order fields for this Quick Deal.' });
       }
 
       const guild = await client.guilds.fetch(GUILD_ID);
@@ -695,9 +697,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
 
       if (!pickedCategory) {
-        return interaction.reply({
-          content: '❌ All deal categories are full (50 channels each). Please contact staff to create a new category.',
-          ephemeral: true
+        return interaction.editReply({
+          content: '❌ All deal categories are full (50 channels each). Please contact staff to create a new category.'
         });
       }
 
@@ -803,13 +804,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         console.warn('⚠️ Could not disable Claim Deal button:', e.message);
       }
 
-      await interaction.reply({
-        content: `✅ Quick Deal claimed! Your deal channel is <#${channel.id}>.\nPlease click **"Process Claim"** in that channel to verify your Seller ID and start the photo upload.`,
-        ephemeral: true
+      await interaction.editReply({
+        content: `✅ Quick Deal claimed! Your deal channel is <#${channel.id}>.\nPlease click **"Process Claim"** in that channel to verify your Seller ID and start the photo upload.`
       });
     } catch (err) {
       console.error('❌ Error processing Quick Deal claim:', err);
-      return interaction.reply({ content: '❌ Something went wrong while claiming this Quick Deal. Please try again.', ephemeral: true });
+      return interaction.editReply({ content: '❌ Something went wrong while claiming this Quick Deal. Please try again.' });
     }
     return;
   }
