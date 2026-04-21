@@ -623,12 +623,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.showModal(modal);
     } catch (err) {
       if (err.code === 10062) {
-        await interaction.channel.send({ content: '⚠️ That Quick Deal button expired. Please use a fresh one if available.', ephemeral: true });
+        await interaction.channel.send({ content: '⚠️ That Quick Deal button expired. Please use a fresh one if available.', flags: 64 });
         return;
       }
       console.error('quick_claim showModal failed:', err);
       try {
-        await interaction.reply({ content: '❌ Could not open the Quick Deal claim form. Please try again.', ephemeral: true });
+        await interaction.reply({ content: '❌ Could not open the Quick Deal claim form. Please try again.', flags: 64 });
       } catch (_) {}
     }
     return;
@@ -845,7 +845,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       if (!data?.sellerRecordId) {
-        return interaction.reply({ content: '❌ No claimed Seller found for this deal. Please cancel and reclaim the deal.', ephemeral: true });
+        return interaction.reply({ content: '❌ No claimed Seller found for this deal. Please cancel and reclaim the deal.', flags: 64 });
       }
 
       const sellerRecord = await base('Sellers Database').find(data.sellerRecordId);
@@ -864,7 +864,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } catch (err) {
       console.error('❌ Error starting claim verification:', err);
       try {
-        await interaction.reply({ content: '❌ Something went wrong while verifying your Seller ID. Please try again or contact support.', ephemeral: true });
+        await interaction.reply({ content: '❌ Something went wrong while verifying your Seller ID. Please try again or contact support.', flags: 64 });
       } catch (_) {}
     }
     return;
@@ -874,7 +874,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const orderRecordId = interaction.customId.replace('request_label_quick_deal:', '').trim();
   
     try {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: 64 });
   
       if (!LOJIQ_WMS_BASE_URL) {
         throw new Error('LOJIQ_WMS_BASE_URL is missing');
@@ -990,7 +990,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     console.log(`🛑 Cancel Deal clicked in ${interaction.channel.name}`);
 
     try {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: 64 });
     } catch (err) {
       if (err.code === 10062) {
         console.warn(`⚠️ Expired Cancel Deal button clicked in ${interaction.channel.name}`);
