@@ -896,7 +896,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
   
       await interaction.editReply({
-        content: data.message || '✅ Label request started.'
+        content: data.message || '✅ Label request started.',
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`request_label_quick_deal:${orderRecordId}`)
+              .setLabel('Label Requested')
+              .setStyle(ButtonStyle.Secondary)
+              .setDisabled(true)
+          )
+        ]
       });
     } catch (err) {
       console.error('❌ request_label_quick_deal failed:', err);
