@@ -87,6 +87,9 @@ const TRANSCRIPTS_CHANNEL_ID = process.env.TRANSCRIPTS_CHANNEL_ID;
 const QUICK_DEALS_DEFAULT_CHANNEL_ID =
   process.env.QUICK_DEALS_DEFAULT_CHANNEL_ID || process.env.QUICK_DEALS_CHANNEL_ID;
 
+// Label Handling Lojiq WMS)
+const LOJIQ_WMS_BASE_URL = process.env.LOJIQ_WMS_BASE_URL || '';
+
 function safeLower(s) {
   return String(s || '').trim().toLowerCase();
 }
@@ -867,6 +870,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
+  if (interaction.isButton() && interaction.customId.startsWith('request_label_quick_deal:')) {
+    const orderRecordId = interaction.customId.replace('request_label_quick_deal:', '').trim();
+  
+    try {
+      await interaction.deferReply({ ephemeral: true });
+  
+      if (!LOJIQ_WMS_BASE_URL) {
+        throw new Error('LOJIQ_WMS_BASE_URL is missing');
+      }
+  
+      const response = await fetch(`${LOJIQ_WMS_BASE_URL.replace(/\/$/, '')}/api/request-label`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'quick_deal',
+          record_id: orderRecordId
+        })
+      });
+  
+      const data = await response.json().catch(() => ({}));
+  
+      if (!response.ok) {
+        throw new Error(data.details || data.error || 'Failed to request label');
+      }
+  
+      await interaction.editReply({
+        content: data.message || '✅ Label request started.'
+      });
+    } catch (err) {
+      console.error('❌ request_label_quick_deal failed:', err);
+      await interaction.editReply({
+        content: `❌ ${err.message || 'Failed to request label'}`
+      }).catch(() => null);
+    }
+  
+    return;
+  }
+
   /* ---------- CONFIRM / REJECT SELLER ---------- */
 
   if (interaction.isButton() && ['confirm_seller', 'reject_seller'].includes(interaction.customId)) {
@@ -1230,14 +1271,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const buttonMessage = recentMessages.find((msg) => msg.components.length > 0);
     if (buttonMessage) await buttonMessage.edit({ components: [] });
 
+    const requestLabelRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`request_label_quick_deal:${sellerData.orderRecordId}`)
+        .setLabel('Request Label')
+        .setStyle(ButtonStyle.Primary)
+    );
+    
     await interaction.editReply({
       content:
         `✅ Deal processed!\n\n` +
-        `💶 Final payout: €${finalPayout.toFixed(2)}${trustNote}\n\n` +
-        `📦 The shipping label will be sent shortly.\n\n` +
-        `📬 Please prepare the package and ensure it is packed in a clean, unbranded box with no unnecessary stickers or markings.\n\n` +
+        `Final payout: €${finalPayout.toFixed(2)}${trustNote}\n\n` +
+        `When you are ready to ship, click **Request Label** below.\n\n` +
+        `Please prepare the package in a clean, unbranded box with no unnecessary stickers or markings.\n\n` +
         `❌ Do not include anything inside the box, as this is not a standard deal.\n\n` +
-        `📸 Please pack it as professionally as possible. If you're unsure, feel free to take a photo of the package and share it here before shipping.`
+        `Please pack it as professionally as possible.`,
+      components: [requestLabelRow]
     });
 
     return;
