@@ -896,7 +896,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   
       await interaction.message.edit({
         components: newRows
-      });
+      }).catch(() => null);
   
       if (!LOJIQ_WMS_BASE_URL) {
         throw new Error('LOJIQ_WMS_BASE_URL is missing');
