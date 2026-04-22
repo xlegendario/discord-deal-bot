@@ -876,7 +876,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const orderRecordId = interaction.customId.replace('request_label_quick_deal:', '').trim();
   
     try {
-      await interaction.deferReply({ flags: 64 });
+      await interaction.deferUpdate();
+  
+      const existingRows = interaction.message.components || [];
+  
+      const newRows = existingRows.map((row) =>
+        new ActionRowBuilder().addComponents(
+          ...row.components.map((btn) => {
+            if (btn.customId?.startsWith('request_label_quick_deal:')) {
+              return ButtonBuilder.from(btn)
+                .setDisabled(true)
+                .setLabel('Label Requested')
+                .setStyle(ButtonStyle.Secondary);
+            }
+            return btn;
+          })
+        )
+      );
+  
+      await interaction.message.edit({
+        components: newRows
+      });
   
       if (!LOJIQ_WMS_BASE_URL) {
         throw new Error('LOJIQ_WMS_BASE_URL is missing');
@@ -897,28 +917,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
         throw new Error(data.details || data.error || 'Failed to request label');
       }
   
-      await interaction.editReply({
-        content: data.message || '✅ Label request started.',
-        components: [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`request_label_quick_deal:${orderRecordId}`)
-              .setLabel('Label Requested')
-              .setStyle(ButtonStyle.Secondary)
-              .setDisabled(true)
-          )
-        ]
+      await interaction.followUp({
+        content: data.message || '✅ Label request received. We’ll process it shortly.',
+        flags: 64
       });
     } catch (err) {
       console.error('❌ request_label_quick_deal failed:', err);
-      await interaction.editReply({
-        content: `❌ ${err.message || 'Failed to request label'}`
+  
+      await interaction.followUp({
+        content: `❌ ${err.message || 'Failed to request label'}`,
+        flags: 64
       }).catch(() => null);
     }
   
     return;
   }
-
   /* ---------- CONFIRM / REJECT SELLER ---------- */
 
   if (interaction.isButton() && ['confirm_seller', 'reject_seller'].includes(interaction.customId)) {
@@ -1224,7 +1237,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         if (trustedRoleId && !isTrusted) {
           finalPayout = Math.max(0, payout - 10);
           shippingDeduction = 10;
-          trustNote = '\n\n⚠️ Because you are not a Trusted Seller yet, we had to deduct €10 from the payout for the extra label and handling.';
+          trustNote = '⚠️ Because you are not a Trusted Seller yet, we had to deduct €10 from the payout for the extra label and handling.';
         }
       }
     } catch (err) {
@@ -1289,17 +1302,33 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setStyle(ButtonStyle.Primary)
     );
     
+    const readyEmbed = new EmbedBuilder()
+      .setTitle('📦 Ready to Ship')
+      .setColor(0x2ecc71)
+      .addFields(
+        {
+          name: '💶 Final Payout',
+          value: `€${finalPayout.toFixed(2)}${trustNote || ''}`,
+          inline: false
+        },
+        {
+          name: '📦 Next Step',
+          value: 'Click **Request Label** when you are ready to ship.',
+          inline: false
+        },
+        {
+          name: '📬 Packaging Instructions',
+          value:
+            'Use a clean, unbranded box.\nRemove unnecessary stickers or markings.\nDo not include anything extra inside.\nPack it as professionally as possible.',
+          inline: false
+        }
+      )
+      .setFooter({ text: 'Kickz Caviar' });
+    
     await interaction.editReply({
-      content:
-        `✅ Deal processed!\n\n` +
-        `Final payout: €${finalPayout.toFixed(2)}${trustNote}\n\n` +
-        `When you are ready to ship, click **Request Label** below.\n\n` +
-        `Please prepare the package in a clean, unbranded box with no unnecessary stickers or markings.\n\n` +
-        `❌ Do not include anything inside the box, as this is not a standard deal.\n\n` +
-        `Please pack it as professionally as possible.`,
+      embeds: [readyEmbed],
       components: [requestLabelRow]
     });
-
     return;
   }
 });
