@@ -588,6 +588,198 @@ app.post('/quick-deal/disable', async (req, res) => {
   }
 });
 
+app.post('/quick-deal/claim-from-portal', async (req, res) => {
+  try {
+    const {
+      recordId,
+      sellerRecordId,
+      sellerId,
+      sellerDiscordId,
+      vatType
+    } = req.body || {};
+
+    if (!recordId) return res.status(400).json({ error: 'Missing recordId' });
+    if (!sellerRecordId) return res.status(400).json({ error: 'Missing sellerRecordId' });
+    if (!sellerId) return res.status(400).json({ error: 'Missing sellerId' });
+    if (!sellerDiscordId) return res.status(400).json({ error: 'Missing sellerDiscordId' });
+
+    if (!['Margin', 'VAT21', 'VAT0'].includes(vatType)) {
+      return res.status(400).json({ error: 'Invalid vatType' });
+    }
+
+    const orderRecordId = recordId;
+    const orderRecord = await base(ORDER_TABLE_NAME).find(orderRecordId);
+
+    const currentStatus = String(orderRecord.get('Fulfillment Status') || '').trim();
+
+    if (currentStatus !== 'Outsource') {
+      return res.status(409).json({
+        error: `Deal is not claimable. Current status: ${currentStatus || 'Unknown'}`
+      });
+    }
+
+    const sellerRecord = await base('Sellers Database').find(sellerRecordId);
+
+    const orderId = String(orderRecord.get('Order ID') || '').trim();
+    const shopifyOrderNumber = String(orderRecord.get('Shopify Order Number') || '').trim();
+
+    const size = orderRecord.get('Size') || '';
+    const brand = orderRecord.get('Brand') || '';
+    const productName = orderRecord.get('Product Name') ?? orderRecord.get('Shopify Product Name') ?? '';
+
+    const sku = asText(orderRecord.get('SKU')).trim();
+    const skuSoft = asText(orderRecord.get('SKU (Soft)')).trim();
+    const finalSku = sku || skuSoft;
+
+    const payoutMargin = Number(orderRecord.get('Outsource Buying Price') || 0);
+    const payoutVat0 = Number(orderRecord.get('Outsource Buying Price (VAT 0%)') || 0);
+
+    const payout = vatType === 'VAT0' ? payoutVat0 : payoutMargin;
+
+    const pictureField = orderRecord.get('Picture');
+    const imageUrl = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
+
+    if (!orderId || !productName || !finalSku || !size || !brand || !Number.isFinite(payout) || payout <= 0) {
+      return res.status(400).json({
+        error: 'Missing or invalid order fields for this Quick Deal.'
+      });
+    }
+
+    const guild = await client.guilds.fetch(GUILD_ID);
+
+    const pickedCategory = await pickCategoryWithSpace(guild, DEAL_CATEGORY_IDS);
+
+    if (!pickedCategory) {
+      return res.status(400).json({
+        error: 'All deal categories are full. Please create a new category.'
+      });
+    }
+
+    const rawChannelName = shopifyOrderNumber ? `${orderId}-${shopifyOrderNumber}` : orderId;
+    const finalChannelName = toChannelSlug(rawChannelName).slice(0, 100);
+
+    const channel = await guild.channels.create({
+      name: finalChannelName,
+      type: ChannelType.GuildText,
+      parent: pickedCategory.id,
+      permissionOverwrites: [
+        {
+          id: guild.roles.everyone,
+          deny: [PermissionsBitField.Flags.ViewChannel]
+        },
+        {
+          id: sellerDiscordId,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.AttachFiles
+          ]
+        }
+      ]
+    });
+
+    const embed = new EmbedBuilder()
+      .setTitle('💸 Quick Deal Claimed')
+      .setDescription(
+        `**Order:** ${orderId}\n` +
+        `**Product:** ${productName}\n` +
+        `**SKU:** ${finalSku}\n` +
+        `**Size:** ${size}\n` +
+        `**Brand:** ${brand}\n` +
+        `**Payout:** €${payout.toFixed(2)}\n` +
+        `**VAT Type:** ${vatType}\n` +
+        `**Seller (claimed with):** ${sellerId}`
+      )
+      .setColor(0xffed00);
+
+    if (imageUrl) embed.setImage(imageUrl);
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('start_claim').setLabel('Process Claim').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('cancel_deal').setLabel('Cancel Deal').setStyle(ButtonStyle.Danger)
+    );
+
+    const dealMsg = await channel.send({
+      embeds: [embed],
+      components: [row]
+    });
+
+    sellerMap.set(channel.id, {
+      orderRecordId,
+      dealEmbedId: dealMsg.id,
+      sellerRecordId: sellerRecord.id,
+      sellerDiscordId,
+      sellerId,
+      vatType,
+      payoutChosen: payout,
+      isQuickDeal: true,
+      quickDealRecordId: recordId,
+      confirmed: false
+    });
+
+    await base(ORDER_TABLE_NAME).update(orderRecordId, {
+      'Fulfillment Status': 'Claim Processing',
+      'Claimed Channel ID': channel.id,
+      'Claimed Message ID': dealMsg.id,
+      'Claimed Seller ID': [sellerRecord.id],
+      'Claimed Seller Discord ID': sellerDiscordId,
+      'Claimed Seller Confirmed?': false,
+      'Claimed Seller VAT Type': vatType
+    });
+
+    try {
+      const claimMessageId = orderRecord.get('Claim Message ID');
+      const claimMessageUrl = orderRecord.get('Claim Message URL');
+
+      const listingChannelId =
+        extractChannelIdFromDiscordUrl(claimMessageUrl) || QUICK_DEALS_DEFAULT_CHANNEL_ID || QUICK_DEALS_CHANNEL_ID;
+
+      if (claimMessageId && listingChannelId) {
+        const dealsChannel = await client.channels.fetch(listingChannelId);
+
+        if (dealsChannel && dealsChannel.isTextBased()) {
+          const listingMsg = await dealsChannel.messages.fetch(claimMessageId).catch(() => null);
+
+          if (listingMsg) {
+            const disabledClaim = new ButtonBuilder()
+              .setCustomId(`quick_claim_${recordId}`)
+              .setLabel('Claim Deal')
+              .setStyle(ButtonStyle.Secondary)
+              .setDisabled(true);
+
+            const seeAllButton = new ButtonBuilder()
+              .setLabel('See All Quick Deals')
+              .setStyle(ButtonStyle.Link)
+              .setURL(QUICK_DEALS_AIRTABLE_URL);
+
+            const disabledRow = new ActionRowBuilder().addComponents(disabledClaim, seeAllButton);
+
+            await listingMsg.edit({
+              components: [disabledRow]
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Could not disable Discord Claim Deal button:', e.message);
+    }
+
+    return res.json({
+      ok: true,
+      channelId: channel.id,
+      channelUrl: `https://discord.com/channels/${GUILD_ID}/${channel.id}`,
+      messageId: dealMsg.id
+    });
+  } catch (err) {
+    console.error('❌ Error claiming Quick Deal from portal:', err);
+
+    return res.status(500).json({
+      error: 'Something went wrong while claiming this Quick Deal.',
+      details: err.message
+    });
+  }
+});
+
 /* =================================================
    DISCORD INTERACTIONS – QUICK DEAL CLAIM & FLOW
    ================================================= */
