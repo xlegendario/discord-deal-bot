@@ -1274,7 +1274,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         'Claimed Seller ID': [],
         'Claimed Seller Discord ID': '',
         'Claimed Seller Confirmed?': false,
-        'Claimed Seller VAT Type': null
+        'Claimed Seller VAT Type': null,
+        'Claimed Seller Payout': null
       });
 
       const orderNumber = getOrderIdFromChannelName(channel.name);
