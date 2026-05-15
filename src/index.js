@@ -724,7 +724,8 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
       'Claimed Seller ID': [sellerRecord.id],
       'Claimed Seller Discord ID': sellerDiscordId,
       'Claimed Seller Confirmed?': false,
-      'Claimed Seller VAT Type': vatType
+      'Claimed Seller VAT Type': vatType,
+      'Claimed Seller Payout': payout
     });
 
     try {
@@ -960,7 +961,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         'Claimed Seller ID': [sellerRecord.id],
         'Claimed Seller Discord ID': interaction.user.id,
         'Claimed Seller Confirmed?': false,
-        'Claimed Seller VAT Type': vatType
+        'Claimed Seller VAT Type': vatType,
+        'Claimed Seller Payout': payout
       });
 
       // disable Claim button on MAIN listing (partner messages are links)
