@@ -664,7 +664,7 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
       parent: pickedCategory.id,
       permissionOverwrites: [
         {
-          id: guild.roles.everyone,
+          id: guild.roles.everyone.id,
           deny: [PermissionsBitField.Flags.ViewChannel]
         },
         {
