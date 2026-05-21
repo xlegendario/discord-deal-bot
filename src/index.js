@@ -658,6 +658,21 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
     const rawChannelName = shopifyOrderNumber ? `${orderId}-${shopifyOrderNumber}` : orderId;
     const finalChannelName = toChannelSlug(rawChannelName).slice(0, 100);
 
+    const cleanSellerDiscordId = String(sellerDiscordId).replace(/\D/g, '');
+
+    console.log('sellerDiscordId raw:', sellerDiscordId);
+    console.log('sellerDiscordId clean:', cleanSellerDiscordId);
+    
+    const sellerMember = await guild.members.fetch(cleanSellerDiscordId).catch(() => null);
+    
+    if (!sellerMember) {
+      return res.status(400).json({
+        error: 'Seller Discord ID is not a valid member in this Discord server',
+        sellerDiscordId,
+        cleanSellerDiscordId
+      });
+    }
+
     const channel = await guild.channels.create({
       name: finalChannelName,
       type: ChannelType.GuildText,
@@ -668,7 +683,7 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
           deny: [PermissionsBitField.Flags.ViewChannel]
         },
         {
-          id: sellerDiscordId,
+          id: sellerMember.id,
           allow: [
             PermissionsBitField.Flags.ViewChannel,
             PermissionsBitField.Flags.SendMessages,
