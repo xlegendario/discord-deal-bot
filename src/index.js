@@ -23,7 +23,7 @@ const Airtable = require('airtable');
 const { createTranscript } = require('discord-html-transcripts');
 
 const QUICK_DEALS_AIRTABLE_URL =
-  'https://kickzcaviar.com/dl/527a5a';
+  'https://kickzcaviar.com';
 
 const PARTNER_INVITE_URL = 'https://discord.gg/GZY9NBpYUS';
 
