@@ -1691,7 +1691,8 @@ client.on(Events.MessageCreate, async (message) => {
     message.content === '!finish' &&
     (
       channelName.startsWith('ord-') ||
-      channelName.startsWith('wtb-ord-')
+      channelName.startsWith('wtb-ord-') ||
+      channelName.startsWith('mwtb-')
     )
   ) {
     const memberRoles = message.member.roles.cache.map((r) => r.id);
