@@ -1685,7 +1685,15 @@ client.on(Events.MessageCreate, async (message) => {
     }
   }
   
-  if (message.content === '!finish' && message.channel.name.toLowerCase().startsWith('ord-')) {
+  const channelName = message.channel.name.toLowerCase();
+
+  if (
+    message.content === '!finish' &&
+    (
+      channelName.startsWith('ord-') ||
+      channelName.startsWith('wtb-ord-')
+    )
+  ) {
     const memberRoles = message.member.roles.cache.map((r) => r.id);
     const isAdmin = ADMIN_ROLE_IDS.some((id) => id && memberRoles.includes(id));
     if (!isAdmin) return message.reply('❌ You are not authorized to use this command.');
