@@ -21,18 +21,13 @@ const {
 } = require('discord.js');
 const Airtable = require('airtable');
 const { createTranscript } = require('discord-html-transcripts');
-
 const QUICK_DEALS_AIRTABLE_URL =
   'https://kickzcaviar.com';
-
 const PARTNER_INVITE_URL = 'https://discord.gg/GZY9NBpYUS';
-
 /* ---------------- EXPRESS SETUP ---------------- */
-
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 app.use(
   cors({
     origin: (_origin, cb) => cb(null, true),
@@ -41,9 +36,7 @@ app.use(
   })
 );
 app.options(/.*/, cors());
-
 /* ---------------- DISCORD CLIENT ---------------- */
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -53,7 +46,6 @@ const client = new Client({
     GatewayIntentBits.GuildInvites
   ]
 });
-
 // crash guards
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled rejection:', err);
@@ -61,19 +53,13 @@ process.on('unhandledRejection', (err) => {
 client.on('error', (err) => {
   console.error('Client error:', err);
 });
-
 /* ---------------- AIRTABLE + ENV ---------------- */
-
 const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
-
 registerAffiliateInvites({ client, base, env: process.env });
 registerLeaderboards({ client, base, env: process.env });
 registerMembersBackfill({ client, base, env: process.env });
 registerHubMessages({ client, base, env: process.env });
-
-
 const PORT = process.env.PORT || 3000;
-
 // Discord
 const GUILD_ID = process.env.GUILD_ID;
 const DEAL_CATEGORY_IDS = (process.env.DEAL_CATEGORY_IDS || process.env.CATEGORY_ID || '')
@@ -82,18 +68,14 @@ const DEAL_CATEGORY_IDS = (process.env.DEAL_CATEGORY_IDS || process.env.CATEGORY
   .filter(Boolean);
 const QUICK_DEALS_CHANNEL_ID = process.env.QUICK_DEALS_CHANNEL_ID; // channel where Quick Deals listing embeds live
 const TRANSCRIPTS_CHANNEL_ID = process.env.TRANSCRIPTS_CHANNEL_ID;
-
 // Brand → channel routing (Option A)
 const QUICK_DEALS_DEFAULT_CHANNEL_ID =
   process.env.QUICK_DEALS_DEFAULT_CHANNEL_ID || process.env.QUICK_DEALS_CHANNEL_ID;
-
 // Label Handling Lojiq WMS)
 const LOJIQ_WMS_BASE_URL = process.env.LOJIQ_WMS_BASE_URL || '';
-
 function safeLower(s) {
   return String(s || '').trim().toLowerCase();
 }
-
 function toChannelSlug(s) {
   return String(s || '')
     .toLowerCase()
@@ -102,15 +84,12 @@ function toChannelSlug(s) {
     .replace(/-+/g, '-')         // collapse multiple dashes
     .replace(/^-|-$/g, '');      // trim leading/trailing dash
 }
-
 function getOrderIdFromChannelName(channelName) {
   const raw = String(channelName || '').toUpperCase().trim(); // "ORD-00001-5678"
   const parts = raw.split('-').filter(Boolean);              // ["ORD","00001","5678"]
   if (parts.length >= 2) return `${parts[0]}-${parts[1]}`;   // "ORD-00001"
   return raw;
 }
-
-
 // Optional: normalize common variations (keeps your mapping small)
 function normalizeBrand(brand) {
   const b = safeLower(brand);
@@ -123,55 +102,43 @@ function normalizeBrand(brand) {
   if (b.includes('ugg')) return 'ugg';
   return b;
 }
-
 function parseBrandChannelMap() {
   const raw = process.env.QUICK_DEALS_BRAND_CHANNEL_MAP || '';
   if (!raw) return new Map();
-
   try {
     const obj = JSON.parse(raw);
     const map = new Map();
-
     for (const [k, v] of Object.entries(obj || {})) {
       if (!k || !v) continue;
       map.set(normalizeBrand(k), String(v).trim());
     }
-
     return map;
   } catch (e) {
     console.warn('⚠️ QUICK_DEALS_BRAND_CHANNEL_MAP is not valid JSON:', e.message);
     return new Map();
   }
 }
-
 const BRAND_CHANNEL_MAP = parseBrandChannelMap();
-
 function pickQuickDealsChannelId(brand) {
   const key = normalizeBrand(brand);
   return BRAND_CHANNEL_MAP.get(key) || QUICK_DEALS_DEFAULT_CHANNEL_ID;
 }
-
 // If we only stored Claim Message URL, we can extract the channel id from it
 function extractChannelIdFromDiscordUrl(url) {
   // https://discord.com/channels/<guildId>/<channelId>/<messageId>
   const m = String(url || '').match(/discord\.com\/channels\/\d+\/(\d+)\/\d+/);
   return m ? m[1] : null;
 }
-
-
 // (kept for backward compatibility, but no longer used by /quick-deal/create-partners)
 const PARTNER_QUICK_DEALS_CHANNEL_IDS = (process.env.PARTNER_QUICK_DEALS_CHANNEL_IDS || '')
   .split(',')
   .map((id) => id.trim())
   .filter(Boolean);
-
 // Roles / permissions
 const ADMIN_ROLE_IDS = ['942779423449579530', '1060615571118510191'];
 const TRUSTED_SELLERS_ROLE_ID = process.env.TRUSTED_SELLERS_ROLE_ID;
-
 // Webhook to Make (for Inventory Unit creation etc.)
 const MAKE_QUICK_DEAL_WEBHOOK_URL = process.env.MAKE_QUICK_DEAL_WEBHOOK_URL || '';
-
 /* ---------------- PARTNERS (Airtable) ---------------- */
 /**
  * Uses the Partnerships table instead of env channel IDs.
@@ -187,22 +154,17 @@ const PARTNERS_TABLE_NAME = process.env.AIRTABLE_PARTNERS_TABLE || 'Partnerships
 const PARTNER_FIELD_ACTIVE = 'Active?';
 const PARTNER_FIELD_QD_WEBHOOK = 'Quick Deals Webhook URL';
 const PARTNER_FIELD_WTB_WEBHOOK_FALLBACK = 'WTB Webhook URL';
-
 // In Unfulfilled Orders Log we will store: "partnerRecordId:messageId,partnerRecordId2:messageId2,..."
 const ORDER_TABLE_NAME = 'Unfulfilled Orders Log';
 const ORDER_FIELD_CLAIMED_CHANNEL_ID = 'Claimed Channel ID';
 const PARTNER_FIELD_LAST_QD_POST_AT = 'Last Post At';
 const PARTNER_FIELD_INVITE_URL = 'Invite URL';
-
 /* ---------------- RUNTIME STATE ---------------- */
-
 const sellerMap = new Map(); // channelId -> {orderRecordId, sellerRecordId, sellerId, ...}
 const uploadedImagesMap = new Map(); // channelId -> [imageUrls...]
-
 async function fetchUpTo(channel, max = 500) {
   const collected = [];
   let beforeId;
-
   while (collected.length < max) {
     const batchSize = Math.min(100, max - collected.length);
     const batch = await channel.messages.fetch({
@@ -210,16 +172,13 @@ async function fetchUpTo(channel, max = 500) {
       ...(beforeId ? { before: beforeId } : {})
     });
     if (batch.size === 0) break;
-
     for (const m of batch.values()) collected.push(m);
-
     const oldest = batch.last();
     beforeId = oldest?.id;
     if (!beforeId) break;
   }
   return collected;
 }
-
 function asText(v) {
   if (v == null) return '';
   if (Array.isArray(v)) {
@@ -235,13 +194,35 @@ function asText(v) {
   }
   return String(v);
 }
+// Validates a seller's chosen VAT type against their Sellers Database
+// profile (VAT ID + Country). Returns null when allowed, or the exact
+// block message when not. Rules: no VAT ID → Margin only; VAT ID + NL →
+// no VAT0; VAT ID + non-NL → no VAT21. Margin always allowed. Mirrors
+// validateSellerVatEligibility in the kickz-caviar portal and the wtb-bot
+// so every offer/claim placement point enforces identical rules.
+function validateSellerVatEligibility(sellerVatId, sellerCountry, chosenVatType) {
+  const vat = String(chosenVatType || '').trim();
+  if (vat === 'Margin') return null;
 
+  const hasVatId = !!String(sellerVatId || '').trim();
+  const country = String(sellerCountry || '').trim().toLowerCase();
+  const isNl = country === 'netherlands' || country === 'nederland' || country === 'nl';
+
+  if (!hasVatId) {
+    return "You're not a registered company according to your profile. Please select Margin VAT Type or contact support.";
+  }
+  if (isNl && vat === 'VAT0') {
+    return "As a Dutch company, you can't sell VAT0 to Kickz Caviar B.V.. Please select VAT21 or Margin VAT Type or contact support.";
+  }
+  if (!isNl && vat === 'VAT21') {
+    return "As a Non-Dutch company, you can't sell VAT21 to Kickz Caviar B.V.. Please select VAT0 or Margin VAT Type or contact support.";
+  }
+  return null;
+}
 async function pickCategoryWithSpace(guild, categoryIds) {
   if (!Array.isArray(categoryIds) || categoryIds.length === 0) return null;
-
   // Make sure cache is warm
   await guild.channels.fetch();
-
   // Count children per category
   const counts = new Map(); // parentId -> number of channels
   for (const ch of guild.channels.cache.values()) {
@@ -249,23 +230,17 @@ async function pickCategoryWithSpace(guild, categoryIds) {
     if (!parentId) continue;
     counts.set(parentId, (counts.get(parentId) || 0) + 1);
   }
-
   // Discord category max is 50
   const MAX = 50;
-
   for (const id of categoryIds) {
     const cat = guild.channels.cache.get(id);
     if (!cat) continue;
     if (cat.type !== ChannelType.GuildCategory) continue;
-
     const used = counts.get(id) || 0;
     if (used < MAX) return cat;
   }
-
   return null;
 }
-
-
 /** Read active partners with a Quick Deals webhook URL */
 async function getActiveQuickDealPartners() {
   const records = await base(PARTNERS_TABLE_NAME)
@@ -273,13 +248,11 @@ async function getActiveQuickDealPartners() {
       filterByFormula: `AND({${PARTNER_FIELD_ACTIVE}}=TRUE(), OR({${PARTNER_FIELD_QD_WEBHOOK}}!='', {${PARTNER_FIELD_WTB_WEBHOOK_FALLBACK}}!=''))`
     })
     .all();
-
   return records
     .map((rec) => {
       const qd = rec.get(PARTNER_FIELD_QD_WEBHOOK);
       const fallback = rec.get(PARTNER_FIELD_WTB_WEBHOOK_FALLBACK);
       const webhookUrl = (qd && String(qd).trim()) || (fallback && String(fallback).trim()) || '';
-
       return {
         id: rec.id,
         name: rec.get('Name') || rec.id,
@@ -289,28 +262,22 @@ async function getActiveQuickDealPartners() {
     })
     .filter((p) => !!p.webhookUrl);
 }
-
-
 /** Safely turn a webhook URL into a "PATCH message" URL */
 function webhookEditUrl(webhookUrl, messageId) {
   // strip query params like ?wait=true if someone saved it like that
   const baseUrl = String(webhookUrl).split('?')[0].replace(/\/$/, '');
   return `${baseUrl}/messages/${messageId}`;
 }
-
 /* ---------------- DISCORD READY ---------------- */
-
 client.once('ready', async () => {
   console.log(`🤖 Bot is online as ${client.user.tag}`);
   if (PARTNER_QUICK_DEALS_CHANNEL_IDS.length) {
     console.log('ℹ️ PARTNER_QUICK_DEALS_CHANNEL_IDS is set but Quick Deals partners now send via Airtable webhooks.');
   }
 });
-
 /* =================================================
    QUICK DEALS – LISTING EMBED CREATION & UPDATES
    ================================================= */
-
 /**
  * POST /quick-deal/create
  *
@@ -319,11 +286,8 @@ client.once('ready', async () => {
 app.post('/quick-deal/create', async (req, res) => {
   try {
     const { recordId, orderNumber, productName, sku, size, brand, currentPayout, maxPayout, timeToMaxPayout, imageUrl } = req.body || {};
-
     const targetChannelId = pickQuickDealsChannelId(brand);
-
     console.log(`📌 Quick Deal create: brand="${brand || ''}" -> channelId=${targetChannelId}`);
-
     if (!targetChannelId) return res.status(400).send('Missing QUICK_DEALS_DEFAULT_CHANNEL_ID (or QUICK_DEALS_CHANNEL_ID)');
     if (!GUILD_ID) return res.status(400).send('Missing GUILD_ID env');
     if (!recordId) return res.status(400).send('Missing recordId');
@@ -336,8 +300,6 @@ app.post('/quick-deal/create', async (req, res) => {
         .status(404)
         .send(`Quick Deals target channel not found or not text-based (brand=${brand || '-'}, channelId=${targetChannelId})`);
     }
-
-
     const embed = new EmbedBuilder()
       .setTitle('⚡ Quick Deal')
       .setDescription(`**${productName || '-'}**\n${sku || '-'}\n${size || '-'}\n${brand || '-'}`)
@@ -351,19 +313,12 @@ app.post('/quick-deal/create', async (req, res) => {
           inline: false
         }
       );
-
     if (imageUrl) embed.setImage(imageUrl);
-
     const claimButton = new ButtonBuilder().setCustomId(`quick_claim_${recordId}`).setLabel('Claim Deal').setStyle(ButtonStyle.Success);
-
     const seeAllButton = new ButtonBuilder().setLabel('See All Quick Deals').setStyle(ButtonStyle.Link).setURL(QUICK_DEALS_AIRTABLE_URL);
-
     const row = new ActionRowBuilder().addComponents(claimButton, seeAllButton);
-
     const msg = await channel.send({ embeds: [embed], components: [row] });
-
     const messageUrl = `https://discord.com/channels/${GUILD_ID}/${targetChannelId}/${msg.id}`;
-
     try {
       await base(ORDER_TABLE_NAME).update(recordId, {
         'Claim Message ID': msg.id,
@@ -372,20 +327,17 @@ app.post('/quick-deal/create', async (req, res) => {
     } catch (e) {
       console.warn('⚠️ Could not update Unfulfilled Orders Log with Claim Message fields:', e.message);
     }
-
     return res.status(200).json({
       ok: true,
       channelId: targetChannelId,
       messageId: msg.id,
       messageUrl
     });
-
   } catch (err) {
     console.error('❌ Error creating Quick Deal embed:', err);
     return res.status(500).send('Internal Server Error');
   }
 });
-
 /**
  * POST /quick-deal/create-partners
  *
@@ -397,15 +349,11 @@ app.post('/quick-deal/create', async (req, res) => {
 app.post('/quick-deal/create-partners', async (req, res) => {
   try {
     const { recordId, productName, sku, size, brand, imageUrl } = req.body || {};
-
     if (!recordId) return res.status(400).json({ error: 'Missing recordId' });
-
     const partners = await getActiveQuickDealPartners();
     if (!partners.length) return res.json({ ok: true, message: 'No active Quick Deal partners found' });
-
     for (const partner of partners) {
       const inviteUrl = partner.inviteUrl || PARTNER_INVITE_URL;
-
       const embed = {
         title: '🔥 NEW WTB 🔥',
         color: 0xffed00,
@@ -423,33 +371,26 @@ app.post('/quick-deal/create-partners', async (req, res) => {
           text: '© 2026 Kickz Caviar — All rights reserved'
         }
       };
-
       const webhookUrl = String(partner.webhookUrl || '').split('?')[0];
-
       const resp = await fetch(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ embeds: [embed] })
       }).catch(() => null);
-
       if (!resp || !resp.ok) {
         console.warn(`⚠️ Quick Deal webhook failed for partner ${partner.name} (${partner.id})`);
         continue;
       }
-
       await base(PARTNERS_TABLE_NAME)
         .update(partner.id, { [PARTNER_FIELD_LAST_QD_POST_AT]: new Date().toISOString() })
         .catch(() => null);
     }
-
     return res.json({ ok: true });
   } catch (err) {
     console.error('❌ Error in /quick-deal/create-partners:', err);
     return res.status(500).json({ error: 'Internal error' });
   }
 });
-
-
 /**
  * POST /quick-deal/update-embed
  *
@@ -461,25 +402,20 @@ app.post('/quick-deal/create-partners', async (req, res) => {
 app.post('/quick-deal/update-embed', async (req, res) => {
   try {
     let { channelId, messageId, currentPayout, maxPayout, recordId, timeToMaxPayout } = req.body || {};
-
     // ✅ Resolve correct channelId + messageId from Airtable (because listing is now posted in brand channels)
     let finalTimeToMax = timeToMaxPayout;
-
     if (recordId) {
       try {
         const rec = await base(ORDER_TABLE_NAME).find(recordId);
-
         // If Make didn't pass messageId, use Airtable stored one
         if (!messageId) {
           messageId = rec.get('Claim Message ID') || messageId;
         }
-
         // If Make didn't pass channelId, extract from Claim Message URL
         if (!channelId) {
           const claimUrl = rec.get('Claim Message URL');
           channelId = extractChannelIdFromDiscordUrl(claimUrl) || channelId;
         }
-
         // If Time-to-max not provided, pull from Airtable
         if (!finalTimeToMax) {
           finalTimeToMax = rec.get('Payout Countdown') || finalTimeToMax;
@@ -488,55 +424,42 @@ app.post('/quick-deal/update-embed', async (req, res) => {
         console.warn('⚠️ Could not resolve channel/message from Airtable:', e.message);
       }
     }
-
     const targetChannelId = channelId || QUICK_DEALS_CHANNEL_ID;
     if (!targetChannelId || !messageId) {
       return res.status(400).send('Missing channelId/messageId (and could not resolve via recordId)');
     }
-
     // ----- Update main Quick Deal embed in your server -----
     const guild = await client.guilds.fetch(GUILD_ID);
     const channel = await guild.channels.fetch(targetChannelId);
-
     if (!channel || !channel.isTextBased()) {
       return res.status(404).send('Channel not found or not text-based');
     }
-
     const msg = await channel.messages.fetch(messageId).catch(() => null);
     if (!msg || !msg.embeds || msg.embeds.length === 0) {
       return res.status(404).send('Message or embed not found');
     }
-
     const oldEmbed = msg.embeds[0];
     const newEmbed = EmbedBuilder.from(oldEmbed);
     const fields = [...(oldEmbed.fields || [])];
-
     const setField = (name, value, inline = true) => {
       const idx = fields.findIndex((f) => f.name === name);
       const val = value != null ? String(value) : '';
       if (idx >= 0) fields[idx] = { ...fields[idx], value: val };
       else fields.push({ name, value: val, inline });
     };
-
     if (currentPayout != null) setField('Current Payout', currentPayout, true);
     if (maxPayout != null) setField('Max Payout', maxPayout, true);
-
     if (finalTimeToMax != null && finalTimeToMax !== '') setField('Time to Max Payout', finalTimeToMax, false);
     else setField('Time to Max Payout', '-', false);
-
     newEmbed.setFields(fields);
-
     // ✅ Update ONLY main Quick Deal embed
     await msg.edit({ embeds: [newEmbed] });
-
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error('❌ Error updating Quick Deal embed:', err);
     return res.status(500).send('Internal Server Error');
   }
 });
-
-
 /**
  * POST /quick-deal/disable
  *
@@ -546,48 +469,36 @@ app.post('/quick-deal/update-embed', async (req, res) => {
 app.post('/quick-deal/disable', async (req, res) => {
   try {
     const { recordId } = req.body || {};
-
     if (!recordId) return res.status(400).send('Missing recordId');
     if (!QUICK_DEALS_DEFAULT_CHANNEL_ID && !QUICK_DEALS_CHANNEL_ID)
       return res.status(400).send('Missing QUICK_DEALS_DEFAULT_CHANNEL_ID (or QUICK_DEALS_CHANNEL_ID)');
-
     const orderRecord = await base(ORDER_TABLE_NAME).find(recordId);
     const claimMessageId = orderRecord.get('Claim Message ID');
     const claimMessageUrl = orderRecord.get('Claim Message URL');
     const listingChannelId =
       extractChannelIdFromDiscordUrl(claimMessageUrl) || QUICK_DEALS_DEFAULT_CHANNEL_ID || QUICK_DEALS_CHANNEL_ID;
-
     if (!claimMessageId) {
       return res.status(404).send('No Claim Message ID stored on this Unfulfilled Orders Log record');
     }
-
     const guild = await client.guilds.fetch(GUILD_ID);
     const dealsChannel = await guild.channels.fetch(listingChannelId);
-
     if (!dealsChannel || !dealsChannel.isTextBased()) return res.status(404).send('Quick Deals channel not found or not text-based');
-
     const listingMsg = await dealsChannel.messages.fetch(claimMessageId).catch(() => null);
     if (!listingMsg) return res.status(404).send('Listing message not found');
-
     const disabledClaim = new ButtonBuilder()
       .setCustomId(`quick_claim_${recordId}`)
       .setLabel('Claim Deal')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(true);
-
     const seeAllButton = new ButtonBuilder().setLabel('See All Quick Deals').setStyle(ButtonStyle.Link).setURL(QUICK_DEALS_AIRTABLE_URL);
-
     const disabledRow = new ActionRowBuilder().addComponents(disabledClaim, seeAllButton);
-
     await listingMsg.edit({ components: [disabledRow] });
-
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error('❌ Error disabling Quick Deal button:', err);
     return res.status(500).send('Internal Server Error');
   }
 });
-
 app.post('/quick-deal/claim-from-portal', async (req, res) => {
   try {
     const {
@@ -597,69 +508,63 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
       sellerDiscordId,
       vatType
     } = req.body || {};
-
     if (!recordId) return res.status(400).json({ error: 'Missing recordId' });
     if (!sellerRecordId) return res.status(400).json({ error: 'Missing sellerRecordId' });
     if (!sellerId) return res.status(400).json({ error: 'Missing sellerId' });
     if (!sellerDiscordId) return res.status(400).json({ error: 'Missing sellerDiscordId' });
-
     if (!['Margin', 'VAT21', 'VAT0'].includes(vatType)) {
       return res.status(400).json({ error: 'Invalid vatType' });
     }
-
     const orderRecordId = recordId;
     const orderRecord = await base(ORDER_TABLE_NAME).find(orderRecordId);
-
     const currentStatus = String(orderRecord.get('Fulfillment Status') || '').trim();
-
     if (currentStatus !== 'Outsource') {
       return res.status(409).json({
         error: `Deal is not claimable. Current status: ${currentStatus || 'Unknown'}`
       });
     }
-
     const sellerRecord = await base('Sellers Database').find(sellerRecordId);
+
+    // Block based on the seller's own registration profile (VAT ID +
+    // Country): private seller (no VAT ID) → Margin only; Dutch company →
+    // no VAT0; non-Dutch company → no VAT21.
+    const sellerVatEligibilityError = validateSellerVatEligibility(
+      sellerRecord.get('VAT ID'),
+      sellerRecord.get('Country'),
+      vatType
+    );
+    if (sellerVatEligibilityError) {
+      return res.status(400).json({ error: sellerVatEligibilityError });
+    }
 
     const orderId = String(orderRecord.get('Order ID') || '').trim();
     const shopifyOrderNumber = String(orderRecord.get('Shopify Order Number') || '').trim();
-
     const size = orderRecord.get('Size') || '';
     const brand = orderRecord.get('Brand') || '';
     const productName = orderRecord.get('Product Name') ?? orderRecord.get('Shopify Product Name') ?? '';
-
     const sku = asText(orderRecord.get('SKU')).trim();
     const skuSoft = asText(orderRecord.get('SKU (Soft)')).trim();
     const finalSku = sku || skuSoft;
-
     const payoutMargin = Number(orderRecord.get('Outsource Buying Price') || 0);
     const payoutVat0 = Number(orderRecord.get('Outsource Buying Price (VAT 0%)') || 0);
-
     const payout = vatType === 'VAT0' ? payoutVat0 : payoutMargin;
-
     const pictureField = orderRecord.get('Picture');
     const imageUrl = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
-
     if (!orderId || !productName || !finalSku || !size || !brand || !Number.isFinite(payout) || payout <= 0) {
       return res.status(400).json({
         error: 'Missing or invalid order fields for this Quick Deal.'
       });
     }
-
     const guild = await client.guilds.fetch(GUILD_ID);
-
     const pickedCategory = await pickCategoryWithSpace(guild, DEAL_CATEGORY_IDS);
-
     if (!pickedCategory) {
       return res.status(400).json({
         error: 'All deal categories are full. Please create a new category.'
       });
     }
-
     const rawChannelName = shopifyOrderNumber ? `${orderId}-${shopifyOrderNumber}` : orderId;
     const finalChannelName = toChannelSlug(rawChannelName).slice(0, 100);
-
     const cleanSellerDiscordId = String(sellerDiscordId).replace(/\D/g, '');
-
     console.log('sellerDiscordId raw:', sellerDiscordId);
     console.log('sellerDiscordId clean:', cleanSellerDiscordId);
     
@@ -672,7 +577,6 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
         cleanSellerDiscordId
       });
     }
-
     const channel = await guild.channels.create({
       name: finalChannelName,
       type: ChannelType.GuildText,
@@ -692,7 +596,6 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
         }
       ]
     });
-
     const embed = new EmbedBuilder()
       .setTitle('💸 Quick Deal Claimed')
       .setDescription(
@@ -706,19 +609,15 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
         `**Seller (claimed with):** ${sellerId}`
       )
       .setColor(0xffed00);
-
     if (imageUrl) embed.setImage(imageUrl);
-
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('start_claim').setLabel('Process Claim').setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId('cancel_deal').setLabel('Cancel Deal').setStyle(ButtonStyle.Danger)
     );
-
     const dealMsg = await channel.send({
       embeds: [embed],
       components: [row]
     });
-
     sellerMap.set(channel.id, {
       orderRecordId,
       dealEmbedId: dealMsg.id,
@@ -731,7 +630,6 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
       quickDealRecordId: recordId,
       confirmed: false
     });
-
     await base(ORDER_TABLE_NAME).update(orderRecordId, {
       'Fulfillment Status': 'Claim Processing',
       'Claimed Channel ID': channel.id,
@@ -742,34 +640,26 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
       'Claimed Seller VAT Type': vatType,
       'Claimed Seller Payout': payout
     });
-
     try {
       const claimMessageId = orderRecord.get('Claim Message ID');
       const claimMessageUrl = orderRecord.get('Claim Message URL');
-
       const listingChannelId =
         extractChannelIdFromDiscordUrl(claimMessageUrl) || QUICK_DEALS_DEFAULT_CHANNEL_ID || QUICK_DEALS_CHANNEL_ID;
-
       if (claimMessageId && listingChannelId) {
         const dealsChannel = await client.channels.fetch(listingChannelId);
-
         if (dealsChannel && dealsChannel.isTextBased()) {
           const listingMsg = await dealsChannel.messages.fetch(claimMessageId).catch(() => null);
-
           if (listingMsg) {
             const disabledClaim = new ButtonBuilder()
               .setCustomId(`quick_claim_${recordId}`)
               .setLabel('Claim Deal')
               .setStyle(ButtonStyle.Secondary)
               .setDisabled(true);
-
             const seeAllButton = new ButtonBuilder()
               .setLabel('See All Quick Deals')
               .setStyle(ButtonStyle.Link)
               .setURL(QUICK_DEALS_AIRTABLE_URL);
-
             const disabledRow = new ActionRowBuilder().addComponents(disabledClaim, seeAllButton);
-
             await listingMsg.edit({
               components: [disabledRow]
             });
@@ -779,7 +669,6 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
     } catch (e) {
       console.warn('⚠️ Could not disable Discord Claim Deal button:', e.message);
     }
-
     return res.json({
       ok: true,
       channelId: channel.id,
@@ -788,45 +677,35 @@ app.post('/quick-deal/claim-from-portal', async (req, res) => {
     });
   } catch (err) {
     console.error('❌ Error claiming Quick Deal from portal:', err);
-
     return res.status(500).json({
       error: 'Something went wrong while claiming this Quick Deal.',
       details: err.message
     });
   }
 });
-
 /* =================================================
    DISCORD INTERACTIONS – QUICK DEAL CLAIM & FLOW
    ================================================= */
-
 client.on(Events.InteractionCreate, async (interaction) => {
   if ((interaction.isButton() && interaction.customId.startsWith('partner_')) || (interaction.isModalSubmit() && interaction.customId.startsWith('partner_'))) {
     return;
   }
-
   /* ---------- QUICK DEAL: Claim button → modal ---------- */
-
   if (interaction.isButton() && interaction.customId.startsWith('quick_claim_')) {
     const recordId = interaction.customId.replace('quick_claim_', '').trim();
-
     const modal = new ModalBuilder().setCustomId(`quick_claim_modal_${recordId}`).setTitle('Claim Quick Deal');
-
     const sellerInput = new TextInputBuilder()
       .setCustomId('seller_id')
       .setLabel('Seller ID (e.g. 00001)')
       .setStyle(TextInputStyle.Short)
       .setRequired(true);
-
     const vatInput = new TextInputBuilder()
       .setCustomId('vat_type')
       .setLabel('VAT Type (Margin / VAT21 / VAT0)')
       .setStyle(TextInputStyle.Short)
       .setRequired(true)
       .setPlaceholder('Exactly: "Margin", "VAT21" or "VAT0"');
-
     modal.addComponents(new ActionRowBuilder().addComponents(sellerInput), new ActionRowBuilder().addComponents(vatInput));
-
     try {
       await interaction.showModal(modal);
     } catch (err) {
@@ -843,18 +722,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     return;
   }
-
   /* ---------- QUICK DEAL: modal submit (Seller ID + VAT) ---------- */
-
   if (interaction.isModalSubmit() && interaction.customId.startsWith('quick_claim_modal_')) {
     await interaction.deferReply({ flags: 64 });
   
     const recordId = interaction.customId.replace('quick_claim_modal_', '').trim();
     const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
     const vatRaw = interaction.fields.getTextInputValue('vat_type').trim().toLowerCase();
-
     const sellerId = `SE-${sellerIdRaw.padStart(5, '0')}`;
-
     let vatType;
     if (vatRaw === 'margin') vatType = 'Margin';
     else if (vatRaw === 'vat21' || vatRaw === '21' || vatRaw === '21%') vatType = 'VAT21';
@@ -862,56 +737,54 @@ client.on(Events.InteractionCreate, async (interaction) => {
     else {
       return interaction.editReply({ content: '❌ Invalid VAT Type. Please use **Margin**, **VAT21** or **VAT0**.' });
     }
-
     try {
       const sellerRecords = await base('Sellers Database').select({ filterByFormula: `{Seller ID} = "${sellerId}"`, maxRecords: 1 }).firstPage();
-
       if (sellerRecords.length === 0) {
         return interaction.editReply({ content: `❌ Seller ID **${sellerId}** not found.` });
       }
       const sellerRecord = sellerRecords[0];
 
+      // Block based on the seller's own registration profile (VAT ID +
+      // Country): private seller (no VAT ID) → Margin only; Dutch company →
+      // no VAT0; non-Dutch company → no VAT21.
+      const sellerVatEligibilityError = validateSellerVatEligibility(
+        sellerRecord.get('VAT ID'),
+        sellerRecord.get('Country'),
+        vatType
+      );
+      if (sellerVatEligibilityError) {
+        return interaction.editReply({ content: `❌ ${sellerVatEligibilityError}` });
+      }
+
       const orderRecordId = recordId;
       const orderRecord = await base(ORDER_TABLE_NAME).find(orderRecordId);
-
       const orderId = String(orderRecord.get('Order ID') || '').trim();
       const shopifyOrderNumber = String(orderRecord.get('Shopify Order Number') || '').trim(); // <-- change field name if your Airtable uses another label
-
       const size = orderRecord.get('Size') || '';
       const brand = orderRecord.get('Brand') || '';
       const productName = orderRecord.get('Product Name') ?? orderRecord.get('Shopify Product Name') ?? '';
-
       const sku = asText(orderRecord.get('SKU')).trim();
       const skuSoft = asText(orderRecord.get('SKU (Soft)')).trim();
       const finalSku = sku || skuSoft;
-
       const payoutMargin = Number(orderRecord.get('Outsource Buying Price') || 0);
       const payoutVat0 = Number(orderRecord.get('Outsource Buying Price (VAT 0%)') || 0);
-
       const payout = vatType === 'VAT0' ? payoutVat0 : payoutMargin;
-
       const pictureField = orderRecord.get('Picture');
       const imageUrl = Array.isArray(pictureField) && pictureField.length > 0 ? pictureField[0].url : null;
-
       if (!orderId || !productName || !finalSku || !size || !brand || !Number.isFinite(payout) || payout <= 0) {
         return interaction.editReply({ content: '❌ Missing or invalid order fields for this Quick Deal.' });
       }
-
       const guild = await client.guilds.fetch(GUILD_ID);
-
       // Pick a category that still has room (<50 channels)
       const pickedCategory = await pickCategoryWithSpace(guild, DEAL_CATEGORY_IDS);
-
       console.log(
         `📁 Deal category pick: ${pickedCategory ? `${pickedCategory.name} (${pickedCategory.id})` : 'NONE (all full)'}`
       );
-
       if (!pickedCategory) {
         return interaction.editReply({
           content: '❌ All deal categories are full (50 channels each). Please contact staff to create a new category.'
         });
       }
-
       // Build channel name: Order ID + Shopify Order Number
       const rawChannelName = shopifyOrderNumber ? `${orderId}-${shopifyOrderNumber}` : orderId;
       const finalChannelName = toChannelSlug(rawChannelName).slice(0, 100);
@@ -932,7 +805,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
         ]
       });
-
       const embed = new EmbedBuilder()
         .setTitle('💸 Quick Deal Claimed')
         .setDescription(
@@ -946,16 +818,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
             `**Seller (claimed with):** ${sellerId}`
         )
         .setColor(0xffed00);
-
       if (imageUrl) embed.setImage(imageUrl);
-
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('start_claim').setLabel('Process Claim').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('cancel_deal').setLabel('Cancel Deal').setStyle(ButtonStyle.Danger)
       );
-
       const dealMsg = await channel.send({ embeds: [embed], components: [row] });
-
       sellerMap.set(channel.id, {
         orderRecordId,
         dealEmbedId: dealMsg.id,
@@ -968,7 +836,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         quickDealRecordId: recordId,
         confirmed: false
       });
-
       await base(ORDER_TABLE_NAME).update(orderRecordId, {
         'Fulfillment Status': 'Claim Processing',
         'Claimed Channel ID': channel.id,
@@ -979,7 +846,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         'Claimed Seller VAT Type': vatType,
         'Claimed Seller Payout': payout
       });
-
       // disable Claim button on MAIN listing (partner messages are links)
       try {
         const claimMessageId = orderRecord.get('Claim Message ID');
@@ -1014,7 +880,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } catch (e) {
         console.warn('⚠️ Could not disable Claim Deal button:', e.message);
       }
-
       await interaction.editReply({
         content: `✅ Quick Deal claimed! Your deal channel is <#${channel.id}>.\nPlease click **"Process Claim"** in that channel to verify your Seller ID and start the photo upload.`
       });
@@ -1024,13 +889,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     return;
   }
-
   /* ---------- START CLAIM → “Is this you?” ---------- */
-
   if (interaction.isButton() && interaction.customId === 'start_claim') {
     const channelId = interaction.channel.id;
     let data = sellerMap.get(channelId);
-
     try {
       if (!data || !data.orderRecordId || !data.sellerRecordId) {
         const orderNumber = getOrderIdFromChannelName(interaction.channel.name);
@@ -1040,7 +902,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             maxRecords: 1
           })
           .firstPage();
-
         if (recs.length) {
           const rec = recs[0];
           data = {
@@ -1054,20 +915,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
           sellerMap.set(channelId, data);
         }
       }
-
       if (!data?.sellerRecordId) {
         return interaction.reply({ content: '❌ No claimed Seller found for this deal. Please cancel and reclaim the deal.', flags: 64 });
       }
-
       const sellerRecord = await base('Sellers Database').find(data.sellerRecordId);
       const sellerIdField = sellerRecord.get('Seller ID') || data.sellerId || 'Unknown ID';
       const discordUsername = sellerRecord.get('Discord') || 'Unknown';
-
       const confirmRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('confirm_seller').setLabel('✅ Yes, that is me').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId('reject_seller').setLabel('❌ No, not me').setStyle(ButtonStyle.Danger)
       );
-
       await interaction.reply({
         content: `🔍 We found this Discord Username linked to Seller ID **${sellerIdField}**:\n**${discordUsername}**\n\nIs this you?`,
         components: [confirmRow]
@@ -1080,7 +937,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     return;
   }
-
   if (interaction.isButton() && interaction.customId.startsWith('request_label_quick_deal:')) {
     const orderRecordId = interaction.customId.replace('request_label_quick_deal:', '').trim();
   
@@ -1142,11 +998,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
   /* ---------- CONFIRM / REJECT SELLER ---------- */
-
   if (interaction.isButton() && ['confirm_seller', 'reject_seller'].includes(interaction.customId)) {
     const channelId = interaction.channel.id;
     let data = sellerMap.get(channelId) || {};
-
     try {
       await interaction.deferUpdate();
     } catch (err) {
@@ -1156,10 +1010,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       throw err;
     }
-
     if (interaction.customId === 'confirm_seller') {
       sellerMap.set(channelId, { ...data, confirmed: true });
-
       try {
         let orderRecordId = data.orderRecordId;
         if (!orderRecordId) {
@@ -1181,7 +1033,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } catch (e) {
         console.warn('Could not persist Claimed Seller Confirmed? to Airtable:', e);
       }
-
       try {
         await interaction.message.edit({
           content: '✅ Seller ID confirmed.\nPlease upload **6 different** pictures of the pair like shown below to prove it is in-hand and complete.',
@@ -1193,7 +1044,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       return;
     }
-
     if (interaction.customId === 'reject_seller') {
       try {
         await interaction.message.edit({
@@ -1207,12 +1057,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
   }
-
   /* ---------- CANCEL DEAL BUTTON ---------- */
-
   if (interaction.isButton() && interaction.customId === 'cancel_deal') {
     console.log(`🛑 Cancel Deal clicked in ${interaction.channel.name}`);
-
     try {
       await interaction.deferReply({ flags: 64 });
     } catch (err) {
@@ -1224,12 +1071,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         throw err;
       }
     }
-
     try {
       const channel = interaction.channel;
       const data = sellerMap.get(channel.id);
       let recordId = data?.orderRecordId;
-
       if (!recordId) {
         const orderNumber = getOrderIdFromChannelName(channel.name);
         const records = await base(ORDER_TABLE_NAME)
@@ -1240,9 +1085,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .firstPage();
         if (records.length > 0) recordId = records[0].id;
       }
-
       if (!recordId) return await interaction.editReply('❌ Record ID not found.');
-
       // re-enable Claim button on MAIN listing (partner messages remain links)
       try {
         if (data?.isQuickDeal) {
@@ -1275,12 +1118,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
               }
             }
           }
-
         }
       } catch (e) {
         console.warn('⚠️ Could not re-enable Claim Deal button:', e.message);
       }
-
       await base(ORDER_TABLE_NAME).update(recordId, {
         'Fulfillment Status': 'Outsource',
         'Outsource Start Time': new Date().toISOString(),
@@ -1292,7 +1133,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         'Claimed Seller VAT Type': null,
         'Claimed Seller Payout': null
       });
-
       const orderNumber = getOrderIdFromChannelName(channel.name);
       const invRecords = await base('Inventory Units')
         .select({
@@ -1300,7 +1140,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           maxRecords: 1
         })
         .firstPage();
-
       if (invRecords.length > 0) {
         await base('Inventory Units').update(invRecords[0].id, {
           'Verification Status': 'Cancelled',
@@ -1310,7 +1149,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           'Availability Status': null
         });
       }
-
       const transcriptFileName = `transcript-${channel.name}.html`;
       const transcript = await createTranscript(channel, {
         limit: -1,
@@ -1324,7 +1162,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           files: [transcript]
         });
       }
-
       await interaction.editReply('✅ Deal has been cancelled. Channel will be deleted shortly.');
       setTimeout(() => channel.delete().catch(console.error), 3000);
     } catch (err) {
@@ -1333,14 +1170,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     return;
   }
-
   /* ---------- CONFIRM DEAL BUTTON (ADMIN) ---------- */
-
   if (interaction.isButton() && interaction.customId === 'confirm_deal') {
     const memberRoles = interaction.member.roles.cache.map((role) => role.id);
     const isAdmin = ADMIN_ROLE_IDS.some((roleId) => roleId && memberRoles.includes(roleId));
     if (!isAdmin) return interaction.reply({ content: '❌ You are not authorized to confirm the deal.' });
-
     try {
       await interaction.deferReply();
     } catch (err) {
@@ -1357,10 +1191,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       throw err;
     }
-
     const channel = interaction.channel;
     const messages = await channel.messages.fetch({ limit: 50 });
-
     let sellerData = sellerMap.get(channel.id);
     if (!sellerData) {
       const orderNumber = getOrderIdFromChannelName(channel.name);
@@ -1370,7 +1202,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           maxRecords: 1
         })
         .firstPage();
-
       const rec = recs[0];
       if (rec) {
         sellerData = {
@@ -1384,22 +1215,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
         sellerMap.set(channel.id, sellerData);
       }
     }
-
     if (sellerData?.dealConfirmed) return interaction.editReply({ content: '⚠️ This deal has already been confirmed.' });
     if (!sellerData || !sellerData.orderRecordId || !sellerData.sellerRecordId) return interaction.editReply({ content: '❌ Missing claimed Seller or Order ID.' });
-
     const imageMsg = messages.find(
       (m) => m.attachments.size > 0 && [...m.attachments.values()].some((att) => att.contentType?.startsWith('image/'))
     );
     if (!imageMsg) return interaction.editReply({ content: '❌ No image found in recent messages.' });
-
     let embed;
     const storedId = sellerMap.get(channel.id)?.dealEmbedId;
     if (storedId) {
       const m = await channel.messages.fetch(storedId).catch(() => null);
       embed = m?.embeds?.[0];
     }
-
     if (!embed) {
       const msgs = await fetchUpTo(channel, 500);
       const m = msgs.find(
@@ -1415,28 +1242,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
       );
       embed = m?.embeds?.find((e) => e?.title?.includes('Deal Claimed') || e?.title?.includes('Quick Deal Claimed'));
     }
-
     if (!embed?.description) return interaction.editReply({ content: '❌ Missing deal embed.' });
-
     const lines = embed.description.split('\n');
     const getValue = (label) => lines.find((line) => line.includes(label))?.split(label)[1]?.trim() || '';
-
     const sku = getValue('**SKU:**');
     const size = getValue('**Size:**');
     const brand = getValue('**Brand:**');
     const orderNumber = getValue('**Order:**');
-
     let payout = sellerData?.payoutChosen;
     if (payout == null) {
       const payoutStr = getValue('**Payout:**')?.replace('€', '').replace(',', '.');
       payout = parseFloat(payoutStr || '0');
     }
     let vatType = sellerData?.vatType || getValue('**VAT Type:**') || 'Margin';
-
     let finalPayout = payout;
     let shippingDeduction = 0;
     let trustNote = '';
-
     try {
       const sellerDiscordId = sellerData?.sellerDiscordId;
       if (sellerDiscordId) {
@@ -1453,16 +1274,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } catch (err) {
       console.warn('Could not check trusted role:', err);
     }
-
     const orderRecord = await base(ORDER_TABLE_NAME).find(sellerData.orderRecordId);
     const productName = orderRecord.get('Product Name') || orderRecord.get('Shopify Product Name') || '';
-
     let sellerRecord;
     try {
       sellerRecord = await base('Sellers Database').find(sellerData.sellerRecordId);
     } catch (_) {}
     if (!sellerRecord) return interaction.editReply({ content: '❌ Linked Seller not found in our system.' });
-
     if (MAKE_QUICK_DEAL_WEBHOOK_URL) {
       try {
         await fetch(MAKE_QUICK_DEAL_WEBHOOK_URL, {
@@ -1492,19 +1310,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } else {
       console.warn('⚠️ MAKE_QUICK_DEAL_WEBHOOK_URL is not set; skipping webhook call.');
     }
-
     sellerMap.set(channel.id, { ...sellerData, dealConfirmed: true });
-
     try {
       await base(ORDER_TABLE_NAME).update(sellerData.orderRecordId, { 'Claimed Seller Confirmed?': true });
     } catch (e) {
       console.warn('⚠️ Could not update Claimed Seller Confirmed? in Airtable:', e.message);
     }
-
     const recentMessages = await channel.messages.fetch({ limit: 10 });
     const buttonMessage = recentMessages.find((msg) => msg.components.length > 0);
     if (buttonMessage) await buttonMessage.edit({ components: [] });
-
     const requestLabelRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`request_label_quick_deal:${sellerData.orderRecordId}`)
@@ -1542,11 +1356,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 });
-
 /* =================================================
    MESSAGE HANDLER – PICTURE COUNT + !finish
    ================================================= */
-
 client.on(Events.MessageCreate, async (message) => {
   if (message.channel.name.toUpperCase().startsWith('ORD-') && message.attachments.size > 0) {
     let data = sellerMap.get(message.channel.id);
@@ -1558,7 +1370,6 @@ client.on(Events.MessageCreate, async (message) => {
           maxRecords: 1
         })
         .firstPage();
-
       if (recs.length) {
         data = {
           ...(data || {}),
@@ -1571,43 +1382,33 @@ client.on(Events.MessageCreate, async (message) => {
         sellerMap.set(message.channel.id, data);
       }
     }
-
     const currentUploads = uploadedImagesMap.get(message.channel.id) || [];
-
     const imageUrls = [...message.attachments.values()]
       .filter((att) => att.contentType?.startsWith('image/'))
       .map((att) => att.url);
-
     if (imageUrls.length > 0) {
       currentUploads.push(...imageUrls);
       uploadedImagesMap.set(message.channel.id, currentUploads);
     }
-
     const uploadedCount = currentUploads.length;
-
     if (!message.author.bot && uploadedCount < 6) {
       await message.channel.send(`📸 You've uploaded ${uploadedCount}/6 required pictures.`);
     }
-
     if (uploadedCount >= 6 && !data?.confirmSent) {
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('confirm_deal').setLabel('Confirm Deal').setStyle(ButtonStyle.Success)
       );
-
       await message.channel.send({
         content: '✅ All 6 pictures received. Admin can now confirm the deal.',
         components: [row]
       });
-
       sellerMap.set(message.channel.id, { ...data, confirmSent: true });
     }
   }
-
   if (message.content === '!close' && message.channel.name.toLowerCase().startsWith('ord-')) {
     const memberRoles = message.member.roles.cache.map((r) => r.id);
     const isAdmin = ADMIN_ROLE_IDS.some((id) => id && memberRoles.includes(id));
     if (!isAdmin) return message.reply('❌ You are not authorized to use this command.');
-
     await message.delete().catch(() => {});
   
     await message.channel.send(
@@ -1641,7 +1442,6 @@ client.on(Events.MessageCreate, async (message) => {
       }
     }, 300000); // 5 mins
   }
-
   if (message.content === '!check' && message.channel.name.toLowerCase().startsWith('ord-')) {
     const memberRoles = message.member.roles.cache.map((r) => r.id);
     const isAdmin = ADMIN_ROLE_IDS.some((id) => id && memberRoles.includes(id));
@@ -1686,7 +1486,6 @@ client.on(Events.MessageCreate, async (message) => {
   }
   
   const channelName = message.channel.name.toLowerCase();
-
   if (
     message.content === '!finish' &&
     (
@@ -1698,14 +1497,11 @@ client.on(Events.MessageCreate, async (message) => {
     const memberRoles = message.member.roles.cache.map((r) => r.id);
     const isAdmin = ADMIN_ROLE_IDS.some((id) => id && memberRoles.includes(id));
     if (!isAdmin) return message.reply('❌ You are not authorized to use this command.');
-
     // 🧹 delete the command message
     await message.delete().catch(() => {});
-
     await message.channel.send(
       '✅ This deal is now finished. Thank you for this deal — we look forward to dealing with you again!\n🕒 This ticket will automatically close in 1 hour.'
     );
-
     setTimeout(async () => {
       try {
         const transcriptFileName = `transcript-${message.channel.name}.html`;
@@ -1714,7 +1510,6 @@ client.on(Events.MessageCreate, async (message) => {
           returnBuffer: false,
           fileName: transcriptFileName
         });
-
         const transcriptsChannel = await client.channels.fetch(TRANSCRIPTS_CHANNEL_ID);
         if (transcriptsChannel && transcriptsChannel.isTextBased()) {
           await transcriptsChannel.send({
@@ -1722,7 +1517,6 @@ client.on(Events.MessageCreate, async (message) => {
             files: [transcript]
           });
         }
-
         await message.channel.delete();
       } catch (err) {
         console.error(`❌ Error finishing deal ${message.channel.name}:`, err);
@@ -1730,9 +1524,7 @@ client.on(Events.MessageCreate, async (message) => {
     }, 3600000);
   }
 });
-
 /* ---------------- START BOT + SERVER ---------------- */
-
 client.login(process.env.DISCORD_TOKEN);
 app.listen(PORT, () => {
   console.log(`🌐 Express server running on port ${PORT}`);
