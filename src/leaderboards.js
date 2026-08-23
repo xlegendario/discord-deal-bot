@@ -22,6 +22,13 @@ function registerLeaderboards(ctx) {
     LEADERBOARD_TOP_N = "10",
     REFERRAL_QUALIFIED_FIELD = "Referral Qualified",
     REFERRAL_FEE_EUR = "5",
+
+    // De maandelijkse verdiensten-DM naar affiliates. Staat uit: de
+    // affiliate-channels zijn privé gemaakt en het programma ligt stil, dus
+    // sellers moeten er ook geen DM meer over krijgen. De winnaars worden nog
+    // wel gewoon in het winners-channel gepost. Zet op "true" om de DM's weer
+    // aan te zetten; de functie zelf blijft in stand.
+    AFFILIATE_EARNINGS_DM = "false",
     DISCORD_TOKEN,
 
     // Carryover config
@@ -38,6 +45,7 @@ function registerLeaderboards(ctx) {
   const invitesLogTable = base(AIRTABLE_INVITES_LOG_TABLE);
 
   const TOP_N = Math.max(3, Math.min(25, parseInt(LEADERBOARD_TOP_N, 10) || 10));
+  const EARNINGS_DM_ENABLED = String(AFFILIATE_EARNINGS_DM).toLowerCase() === "true";
   const FEE = Number(REFERRAL_FEE_EUR) || 5;
 
   const nameCache = new Map();
@@ -443,9 +451,14 @@ function registerLeaderboards(ctx) {
           data.inviteTable.includes("No invites yet") && data.affiliateTable.includes("No qualified");
         if (!isEmptyMonth) {
           await winnersChannel.send({ embeds: [finalEmbed] }).catch(() => {});
-          await sendMonthlyEarningsDMs(prev);
+
+          if (EARNINGS_DM_ENABLED) {
+            await sendMonthlyEarningsDMs(prev);
+          } else {
+            console.log(`LB: ${prev} winners posted, earnings DMs disabled (AFFILIATE_EARNINGS_DM)`);
+          }
         } else {
-          console.log(`LB: ${prev} had no data, skipping winners post & DMs`);
+          console.log(`LB: ${prev} had no data, skipping winners post`);
         }
       }
 
