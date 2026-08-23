@@ -74,6 +74,110 @@ const PORTAL_SIGNUP_URL = `${KC_PORTAL_BASE_URL.replace(/\/$/, '')}/signup`;
 // herstart niet te overleven, dan klikt hij gewoon opnieuw.
 const pendingQuickClaims = new Map();
 
+// Discord geeft drie seconden om op een knopklik te antwoorden, en showModal
+// kan niet uitgesteld worden. Een korte cache houdt de veelvoorkomende klik
+// (bekende seller) op nul netwerkverkeer.
+const sellerLookupCache = new Map();
+const SELLER_LOOKUP_TTL_MS = 5 * 60 * 1000;
+
+function forgetSellerLookup(discordId) {
+  sellerLookupCache.delete(discordId);
+}
+
+// Geeft het lookup-resultaat terug, of null als het niet op tijd lukte. Bij
+// null gaat de aanroeper door met de gewone modal en vangt de submit-handler
+// het alsnog af.
+async function lookupSellerCached(discordId) {
+  const cached = sellerLookupCache.get(discordId);
+
+  if (cached && Date.now() - cached.at < SELLER_LOOKUP_TTL_MS) return cached.value;
+
+  try {
+    const value = await Promise.race([
+      portalPost('/api/internal/seller-by-discord', { discord_id: discordId }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+    ]);
+
+    sellerLookupCache.set(discordId, { value, at: Date.now() });
+    return value;
+  } catch (err) {
+    console.error('seller-by-discord lookup failed:', err.message);
+    return null;
+  }
+}
+
+
+const NOT_LINKED_EMBED = {
+  title: '⚠️ We could not find your seller profile',
+  description: [
+    "This Discord account isn't connected to a seller profile, so we don't know who's making this offer.",
+    '',
+    "**Sold with us before?** Use *Link my Seller ID* — you'll need your Seller ID and the email on your profile.",
+    '',
+    '**New here?** Use *Create a profile* to sign up.'
+  ].join('\n'),
+  color: 0xf1c40f
+};
+
+function notLinkedComponents() {
+  return [
+    {
+      type: 1,
+      components: [
+        { type: 2, style: 1, label: 'Link my Seller ID', custom_id: 'claim_start' },
+        { type: 2, style: 5, label: 'Create a profile', url: PORTAL_SIGNUP_URL }
+      ]
+    }
+  ];
+}
+
+async function dmNotLinked(user) {
+  try {
+    await user.send({ embeds: [NOT_LINKED_EMBED], components: notLinkedComponents() });
+  } catch (err) {
+    // DM's uit staan is geen fout; het ephemeral antwoord staat er ook nog.
+    console.warn('Could not DM not-linked notice:', err.message);
+  }
+}
+
+function buildClaimProfileModal() {
+  const modal = new ModalBuilder().setCustomId('claim_profile_modal').setTitle('Link your Seller ID');
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('claim_seller_id')
+        .setLabel('Your Seller ID (numbers only)')
+        .setPlaceholder('00001')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('claim_email')
+        .setLabel('The email on your seller profile')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+    )
+  );
+
+  return modal;
+}
+
+
+// Zonder deze twee valt de seller-lookup stil terug op de oude route: de
+// gebruiker krijgt dan alsnog het offerformulier en pas bij het versturen te
+// horen dat er iets mis is. Die terugval is met opzet (een platte portal mag
+// niet alles blokkeren), maar een ontbrekende env-var hoort zichtbaar te zijn.
+if (!KC_PORTAL_SECRET) {
+  console.error(
+    '❌ KC_PORTAL_SECRET ontbreekt — seller-lookup en profiel claimen werken niet. ' +
+      'Zet KC_PORTAL_SECRET en KC_PORTAL_BASE_URL op deze service.'
+  );
+} else {
+  console.log(`✅ Portal-koppeling actief: ${KC_PORTAL_BASE_URL}`);
+}
+
 async function portalPost(path, body) {
   if (!KC_PORTAL_SECRET) throw new Error('KC_PORTAL_SECRET is missing');
 
@@ -325,6 +429,20 @@ client.once('ready', async () => {
  *
  * Main Quick Deal in your own server
  */
+// Opvraagbaar in plaats van alleen in de log. Zoeken in Render-logs is
+// onbetrouwbaar gebleken als diagnose: de regel stond er wel in de code maar
+// niet in de log. Dit geeft direct antwoord op de vraag die telt — draait de
+// nieuwe code, en is de portal-koppeling geconfigureerd?
+app.get('/portal-status', (_req, res) => {
+  res.json({
+    build: 'seller-lookup-v1',
+    portal_base_url: KC_PORTAL_BASE_URL,
+    portal_secret_set: !!KC_PORTAL_SECRET,
+    node: process.version,
+    started_at: new Date().toISOString()
+  });
+});
+
 app.post('/quick-deal/create', async (req, res) => {
   try {
     const { recordId, orderNumber, productName, sku, size, brand, currentPayout, maxPayout, timeToMaxPayout, imageUrl } = req.body || {};
@@ -740,28 +858,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
    * afwisseling knop -> modal -> knop -> modal.
    */
   if (interaction.isButton() && interaction.customId === 'claim_start') {
-    const modal = new ModalBuilder().setCustomId('claim_profile_modal').setTitle('Link your Seller ID');
-
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId('claim_seller_id')
-          .setLabel('Your Seller ID (numbers only)')
-          .setPlaceholder('00001')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-      ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId('claim_email')
-          .setLabel('The email on your seller profile')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true)
-      )
-    );
-
     try {
-      await interaction.showModal(modal);
+      await interaction.showModal(buildClaimProfileModal());
     } catch (err) {
       console.error('claim_start showModal failed:', err);
     }
@@ -860,6 +958,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // Gekoppeld. Stond hij midden in een Quick Deal, dan krijgt hij de knop om
     // daar direct verder te gaan in plaats van opnieuw te moeten zoeken.
+    // De cache zei net nog "niet gevonden"; dat klopt niet meer.
+    forgetSellerLookup(interaction.user.id);
+
     const pending = pendingQuickClaims.get(interaction.user.id);
     pendingQuickClaims.delete(interaction.user.id);
 
@@ -887,6 +988,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
   /* ---------- QUICK DEAL: Claim button → modal ---------- */
   if (interaction.isButton() && interaction.customId.startsWith('quick_claim_')) {
     const recordId = interaction.customId.replace('quick_claim_', '').trim();
+
+    // Nog geen gekoppeld profiel? Dan meteen de claim-modal. Dit moet hier en
+    // niet bij het versturen: Discord staat geen modal toe als antwoord op een
+    // modal, dus daar rest alleen een ephemeral bericht — en dat verschijnt
+    // onderaan het kanaal waar het over het hoofd gezien wordt.
+    const sellerCheck = await lookupSellerCached(interaction.user.id);
+
+    if (sellerCheck && !sellerCheck.found) {
+      pendingQuickClaims.set(interaction.user.id, { recordId, at: Date.now() });
+
+      await interaction.reply({
+        embeds: [NOT_LINKED_EMBED],
+        components: notLinkedComponents(),
+        flags: 64
+      }).catch(() => null);
+
+      await dmNotLinked(interaction.user);
+      return;
+    }
+
     const modal = new ModalBuilder().setCustomId(`quick_claim_modal_${recordId}`).setTitle('Claim Quick Deal');
     const vatInput = new TextInputBuilder()
       .setCustomId('vat_type')
@@ -942,23 +1063,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (!sellerLookup?.found) {
       pendingQuickClaims.set(interaction.user.id, { recordId, vatRawInput, at: Date.now() });
 
+      await dmNotLinked(interaction.user);
+
       return interaction.editReply({
-        content: [
-          "You don't have a seller profile linked to this Discord account yet.",
-          '',
-          'Already have a Seller ID? Link it once and you never have to do this again.',
-          '',
-          'No Seller ID yet? Create your profile first.'
-        ].join('\n'),
-        components: [
-          {
-            type: 1,
-            components: [
-              { type: 2, style: 1, label: 'Link my Seller ID', custom_id: 'claim_start' },
-              { type: 2, style: 5, label: 'Create a profile', url: PORTAL_SIGNUP_URL }
-            ]
-          }
-        ]
+        embeds: [NOT_LINKED_EMBED],
+        components: notLinkedComponents()
       });
     }
 
@@ -1757,4 +1866,13 @@ client.on(Events.MessageCreate, async (message) => {
 client.login(process.env.DISCORD_TOKEN);
 app.listen(PORT, () => {
   console.log(`🌐 Express server running on port ${PORT}`);
+
+  // Hier en niet alleen op module-niveau: deze regel verschijnt op het moment
+  // dat Render "Your service is live" meldt, dus precies waar je kijkt. De
+  // module-melding staat daarboven en wordt makkelijk overgescrold.
+  console.log(
+    KC_PORTAL_SECRET
+      ? `✅ Portal-koppeling actief: ${KC_PORTAL_BASE_URL}`
+      : '❌ KC_PORTAL_SECRET ontbreekt — seller-lookup en profiel claimen werken niet.'
+  );
 });
