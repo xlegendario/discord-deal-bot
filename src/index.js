@@ -60,6 +60,48 @@ registerLeaderboards({ client, base, env: process.env });
 registerMembersBackfill({ client, base, env: process.env });
 registerHubMessages({ client, base, env: process.env });
 const PORT = process.env.PORT || 3000;
+
+// De portal weet wie bij welk Discord ID hoort en verstuurt de mail voor het
+// claimen van een profiel. Deze bot vraagt het daar op in plaats van bij elke
+// Quick Deal een Seller ID uit te vragen.
+const KC_PORTAL_BASE_URL = process.env.KC_PORTAL_BASE_URL || 'https://kickzcaviar.com';
+const KC_PORTAL_SECRET = process.env.KC_PORTAL_SECRET || '';
+const SUPPORT_CHANNEL_MENTION = '<#1444838494760603769>';
+const PORTAL_SIGNUP_URL = `${KC_PORTAL_BASE_URL.replace(/\/$/, '')}/signup`;
+
+// Wat iemand had ingevuld toen bleek dat zijn Discord nog nergens aan hangt,
+// zodat hij na het claimen verder kan waar hij was. In geheugen: het hoeft een
+// herstart niet te overleven, dan klikt hij gewoon opnieuw.
+const pendingQuickClaims = new Map();
+
+async function portalPost(path, body) {
+  if (!KC_PORTAL_SECRET) throw new Error('KC_PORTAL_SECRET is missing');
+
+  const response = await fetch(`${KC_PORTAL_BASE_URL.replace(/\/$/, '')}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-kc-secret': KC_PORTAL_SECRET },
+    body: JSON.stringify(body)
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) throw new Error(data.error || `Portal call failed (${response.status})`);
+
+  return data;
+}
+
+// Soepel inlezen: Discord-modals kennen geen dropdown en geen tekenmasker, dus
+// hoofdletters, spaties en koppeltekens moeten hier opgevangen worden.
+function normalizeQuickVatType(raw) {
+  const clean = String(raw ?? '').toLowerCase().replace(/[\s._-]/g, '');
+
+  if (!clean) return null;
+  if (clean === 'margin' || clean === 'marge' || clean === 'm') return 'Margin';
+  if (/^(vat|btw)?21%?$/.test(clean)) return 'VAT21';
+  if (/^(vat|btw)?0+%?$/.test(clean)) return 'VAT0';
+
+  return null;
+}
 // Discord
 const GUILD_ID = process.env.GUILD_ID;
 const DEAL_CATEGORY_IDS = (process.env.DEAL_CATEGORY_IDS || process.env.CATEGORY_ID || '')
@@ -690,22 +732,169 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if ((interaction.isButton() && interaction.customId.startsWith('partner_')) || (interaction.isModalSubmit() && interaction.customId.startsWith('partner_'))) {
     return;
   }
+  /* ---------- PROFIEL CLAIMEN ----------
+   *
+   * Voor sellers met een Seller ID uit de tijd dat we het Discord ID nog niet
+   * vastlegden. Eenmalig: Seller ID + e-mail, dan een code naar dat adres.
+   * Discord staat geen modal toe als antwoord op een modal, vandaar de
+   * afwisseling knop -> modal -> knop -> modal.
+   */
+  if (interaction.isButton() && interaction.customId === 'claim_start') {
+    const modal = new ModalBuilder().setCustomId('claim_profile_modal').setTitle('Link your Seller ID');
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('claim_seller_id')
+          .setLabel('Your Seller ID (numbers only)')
+          .setPlaceholder('00001')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('claim_email')
+          .setLabel('The email on your seller profile')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      )
+    );
+
+    try {
+      await interaction.showModal(modal);
+    } catch (err) {
+      console.error('claim_start showModal failed:', err);
+    }
+    return;
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId === 'claim_profile_modal') {
+    await interaction.deferReply({ flags: 64 });
+
+    const sellerIdInput = interaction.fields.getTextInputValue('claim_seller_id').trim();
+    const emailInput = interaction.fields.getTextInputValue('claim_email').trim();
+
+    let result;
+
+    try {
+      result = await portalPost('/api/internal/claim/start', {
+        discord_id: interaction.user.id,
+        seller_id: sellerIdInput,
+        email: emailInput
+      });
+    } catch (err) {
+      console.error('claim/start failed:', err);
+      return interaction.editReply({
+        content: `⚠️ Something went wrong. Please try again, or open a ticket in ${SUPPORT_CHANNEL_MENTION}.`
+      });
+    }
+
+    if (!result?.ok) {
+      return interaction.editReply({
+        content: `❌ ${result?.error || 'We could not match that Seller ID and email.'}\n\nNeed help? Open a ticket in ${SUPPORT_CHANNEL_MENTION}.`
+      });
+    }
+
+    return interaction.editReply({
+      content: [
+        `📧 We sent a 6-digit code to **${emailInput}**.`,
+        '',
+        'Enter it below to finish linking. The code expires in 15 minutes.'
+      ].join('\n'),
+      components: [
+        { type: 1, components: [{ type: 2, style: 1, label: 'Enter my code', custom_id: 'claim_code' }] }
+      ]
+    });
+  }
+
+  if (interaction.isButton() && interaction.customId === 'claim_code') {
+    const modal = new ModalBuilder().setCustomId('claim_code_modal').setTitle('Enter your code');
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('claim_code_value')
+          .setLabel('6-digit code from your email')
+          .setPlaceholder('123456')
+          .setStyle(TextInputStyle.Short)
+          .setMinLength(6)
+          .setMaxLength(6)
+          .setRequired(true)
+      )
+    );
+
+    try {
+      await interaction.showModal(modal);
+    } catch (err) {
+      console.error('claim_code showModal failed:', err);
+    }
+    return;
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId === 'claim_code_modal') {
+    await interaction.deferReply({ flags: 64 });
+
+    let result;
+
+    try {
+      result = await portalPost('/api/internal/claim/confirm', {
+        discord_id: interaction.user.id,
+        discord_tag: interaction.user.username,
+        code: interaction.fields.getTextInputValue('claim_code_value').trim()
+      });
+    } catch (err) {
+      console.error('claim/confirm failed:', err);
+      return interaction.editReply({
+        content: `⚠️ Something went wrong. Please try again, or open a ticket in ${SUPPORT_CHANNEL_MENTION}.`
+      });
+    }
+
+    if (!result?.ok) {
+      return interaction.editReply({
+        content: `❌ ${result?.error || 'That code is not correct.'}`,
+        components: [
+          { type: 1, components: [{ type: 2, style: 2, label: 'Try again', custom_id: 'claim_code' }] }
+        ]
+      });
+    }
+
+    // Gekoppeld. Stond hij midden in een Quick Deal, dan krijgt hij de knop om
+    // daar direct verder te gaan in plaats van opnieuw te moeten zoeken.
+    const pending = pendingQuickClaims.get(interaction.user.id);
+    pendingQuickClaims.delete(interaction.user.id);
+
+    const lines = [
+      `✅ Linked. Your Seller ID **${result.seller_id}** is now connected to this Discord account.`,
+      '',
+      'You never have to enter it again.'
+    ];
+
+    const components = [];
+
+    if (pending?.recordId) {
+      lines.push('', 'Click below to finish the Quick Deal you started.');
+      components.push({
+        type: 1,
+        components: [
+          { type: 2, style: 3, label: 'Continue my claim', custom_id: `quick_claim_${pending.recordId}` }
+        ]
+      });
+    }
+
+    return interaction.editReply({ content: lines.join('\n'), components });
+  }
+
   /* ---------- QUICK DEAL: Claim button → modal ---------- */
   if (interaction.isButton() && interaction.customId.startsWith('quick_claim_')) {
     const recordId = interaction.customId.replace('quick_claim_', '').trim();
     const modal = new ModalBuilder().setCustomId(`quick_claim_modal_${recordId}`).setTitle('Claim Quick Deal');
-    const sellerInput = new TextInputBuilder()
-      .setCustomId('seller_id')
-      .setLabel('Seller ID (e.g. 00001)')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true);
     const vatInput = new TextInputBuilder()
       .setCustomId('vat_type')
       .setLabel('VAT Type (Margin / VAT21 / VAT0)')
       .setStyle(TextInputStyle.Short)
       .setRequired(true)
-      .setPlaceholder('Exactly: "Margin", "VAT21" or "VAT0"');
-    modal.addComponents(new ActionRowBuilder().addComponents(sellerInput), new ActionRowBuilder().addComponents(vatInput));
+      .setPlaceholder('Margin, VAT21 or VAT0');
+    modal.addComponents(new ActionRowBuilder().addComponents(vatInput));
     try {
       await interaction.showModal(modal);
     } catch (err) {
@@ -727,22 +916,62 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.deferReply({ flags: 64 });
   
     const recordId = interaction.customId.replace('quick_claim_modal_', '').trim();
-    const sellerIdRaw = interaction.fields.getTextInputValue('seller_id').replace(/\D/g, '');
-    const vatRaw = interaction.fields.getTextInputValue('vat_type').trim().toLowerCase();
-    const sellerId = `SE-${sellerIdRaw.padStart(5, '0')}`;
-    let vatType;
-    if (vatRaw === 'margin') vatType = 'Margin';
-    else if (vatRaw === 'vat21' || vatRaw === '21' || vatRaw === '21%') vatType = 'VAT21';
-    else if (vatRaw === 'vat0' || vatRaw === '0' || vatRaw === '0%') vatType = 'VAT0';
-    else {
+    const vatRawInput = interaction.fields.getTextInputValue('vat_type');
+    const vatType = normalizeQuickVatType(vatRawInput);
+
+    if (!vatType) {
       return interaction.editReply({ content: '❌ Invalid VAT Type. Please use **Margin**, **VAT21** or **VAT0**.' });
     }
+
+    // Wie de deal claimt volgt uit het Discord ID van degene die klikt. Vroeger
+    // typte hij zelf een Seller ID in en controleerde niemand of dat het zijne
+    // was, dus kon iedereen een deal claimen namens een ander.
+    let sellerLookup = null;
+
     try {
-      const sellerRecords = await base('Sellers Database').select({ filterByFormula: `{Seller ID} = "${sellerId}"`, maxRecords: 1 }).firstPage();
-      if (sellerRecords.length === 0) {
-        return interaction.editReply({ content: `❌ Seller ID **${sellerId}** not found.` });
+      sellerLookup = await portalPost('/api/internal/seller-by-discord', {
+        discord_id: interaction.user.id
+      });
+    } catch (lookupErr) {
+      console.error('seller-by-discord failed:', lookupErr);
+      return interaction.editReply({
+        content: '⚠️ Could not reach the seller database. Please try again in a moment.'
+      });
+    }
+
+    if (!sellerLookup?.found) {
+      pendingQuickClaims.set(interaction.user.id, { recordId, vatRawInput, at: Date.now() });
+
+      return interaction.editReply({
+        content: [
+          "You don't have a seller profile linked to this Discord account yet.",
+          '',
+          'Already have a Seller ID? Link it once and you never have to do this again.',
+          '',
+          'No Seller ID yet? Create your profile first.'
+        ].join('\n'),
+        components: [
+          {
+            type: 1,
+            components: [
+              { type: 2, style: 1, label: 'Link my Seller ID', custom_id: 'claim_start' },
+              { type: 2, style: 5, label: 'Create a profile', url: PORTAL_SIGNUP_URL }
+            ]
+          }
+        ]
+      });
+    }
+
+    const sellerId = sellerLookup.seller_id;
+
+    try {
+      const sellerRecord = await base('Sellers Database').find(sellerLookup.seller_record_id).catch(() => null);
+
+      if (!sellerRecord) {
+        return interaction.editReply({
+          content: `❌ Your seller profile could not be loaded. Please open a ticket in ${SUPPORT_CHANNEL_MENTION}.`
+        });
       }
-      const sellerRecord = sellerRecords[0];
 
       // Block based on the seller's own registration profile (VAT ID +
       // Country): private seller (no VAT ID) → Margin only; Dutch company →
