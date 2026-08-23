@@ -429,6 +429,20 @@ client.once('ready', async () => {
  *
  * Main Quick Deal in your own server
  */
+// Opvraagbaar in plaats van alleen in de log. Zoeken in Render-logs is
+// onbetrouwbaar gebleken als diagnose: de regel stond er wel in de code maar
+// niet in de log. Dit geeft direct antwoord op de vraag die telt — draait de
+// nieuwe code, en is de portal-koppeling geconfigureerd?
+app.get('/portal-status', (_req, res) => {
+  res.json({
+    build: 'seller-lookup-v1',
+    portal_base_url: KC_PORTAL_BASE_URL,
+    portal_secret_set: !!KC_PORTAL_SECRET,
+    node: process.version,
+    started_at: new Date().toISOString()
+  });
+});
+
 app.post('/quick-deal/create', async (req, res) => {
   try {
     const { recordId, orderNumber, productName, sku, size, brand, currentPayout, maxPayout, timeToMaxPayout, imageUrl } = req.body || {};
@@ -1852,4 +1866,13 @@ client.on(Events.MessageCreate, async (message) => {
 client.login(process.env.DISCORD_TOKEN);
 app.listen(PORT, () => {
   console.log(`🌐 Express server running on port ${PORT}`);
+
+  // Hier en niet alleen op module-niveau: deze regel verschijnt op het moment
+  // dat Render "Your service is live" meldt, dus precies waar je kijkt. De
+  // module-melding staat daarboven en wordt makkelijk overgescrold.
+  console.log(
+    KC_PORTAL_SECRET
+      ? `✅ Portal-koppeling actief: ${KC_PORTAL_BASE_URL}`
+      : '❌ KC_PORTAL_SECRET ontbreekt — seller-lookup en profiel claimen werken niet.'
+  );
 });
