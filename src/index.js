@@ -778,6 +778,179 @@ async function closeSnapshot(tableName, recordId, reason) {
   return true;
 }
 
+/*
+ * Hand a snapshot to a seller: the channel, the embed, the record.
+ *
+ * Lifted out of the Discord modal so the selling page can do the same
+ * thing. Two ways in, one way through - the race is settled on the record
+ * either way, and a claim from the site closes the Discord embed just as a
+ * claim in Discord does.
+ *
+ * Returns an error rather than throwing for the cases a seller can cause -
+ * a deal already gone, a snapshot with no price - so both callers can say
+ * the same thing to him without inventing their own wording.
+ */
+function errorResult(message) {
+  return { error: message };
+}
+
+async function claimSnapshotFor({ tableName, source, recordId, vatType, seller }) {
+  /*
+   * A seller may only claim in a VAT scale his own company can invoice in.
+   *
+   * The selling page greys out the rest, but this dialog is a text box in
+   * Discord where anything can be typed, and a claim in the wrong scale is
+   * a pair we cannot use bought at a price we cannot reclaim. The allowed
+   * list comes from the portal, which computes it from his VAT ID and
+   * country - the same answer the buttons on the site are built from.
+   *
+   * An empty list means the portal could not say, and then nothing is
+   * blocked: refusing every claim because a lookup failed is worse than the
+   * mistake this prevents.
+   */
+  if (
+    Array.isArray(seller.vatTypes) &&
+    seller.vatTypes.length &&
+    !seller.vatTypes.includes(vatType)
+  ) {
+    return errorResult(
+      `Your profile cannot invoice as ${vatType}. ` +
+        `Available to you: ${seller.vatTypes.join(', ')}.`
+    );
+  }
+
+    const record = await base(tableName).find(recordId).catch(() => null);
+
+    if (!record) return errorResult('This deal no longer exists.');
+
+    /*
+      The race is settled on the record, not on the button.
+
+      Two sellers can press Claim inside the same second and Discord will
+      deliver both. Whoever finds the snapshot no longer Active was second,
+      and he is told so plainly rather than walked through a deal he cannot
+      have.
+    */
+    if (String(record.get('Snapshot Status') || '') !== 'Active') {
+      return errorResult('This snapshot is no longer available.');
+    }
+
+    const snapshotPrice = Number(record.get('Snapshot Price') || 0);
+
+    if (!(snapshotPrice > 0)) {
+      return errorResult('This snapshot has no price on it. Please let us know.');
+    }
+
+    // The stored price is VAT-inclusive. A VAT0 seller invoices without
+    // VAT, so his side of the same deal is that figure over 1.21.
+    // The same number a consignor on that VAT type would have been offered,
+    // grid and all. Anything else and the two routes disagree on one deal.
+    const payout = snapshotPayoutFor(snapshotPrice, vatType);
+
+    const orderId = String(
+      record.get('Order ID') || record.get('Member WTB ID') || recordId
+    );
+
+    const productName = String(record.get('Product Name') || '');
+    const sku = String(record.get('SKU') || record.get('SKU (Soft)') || '');
+    const size = String(record.get('Size') || '');
+    const brand = String(record.get('Brand') || '');
+
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const pickedCategory = await pickCategoryWithSpace(guild, snapshotDealCategoryIds());
+
+    if (!pickedCategory) {
+      return errorResult('No deal category with room left. Please let us know.');
+    }
+
+    const channel = await guild.channels.create({
+      name: toChannelSlug(orderId).slice(0, 100),
+      type: ChannelType.GuildText,
+      parent: pickedCategory.id,
+      permissionOverwrites: [
+        { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
+        {
+          id: seller.discordId,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.AttachFiles
+          ]
+        }
+      ]
+    });
+
+    const dealEmbed = new EmbedBuilder()
+      .setTitle('Snapshot Deal Claimed')
+      .setDescription(
+        `**Order:** ${orderId}\n` +
+          `**Product:** ${productName}\n` +
+          `**SKU:** ${sku}\n` +
+          `**Size:** ${size}\n` +
+          `**Brand:** ${brand}\n` +
+          `**Payout:** ${payout.toFixed(2)}\n` +
+          `**VAT Type:** ${vatType}\n\n` +
+          'Press **Process Deal** to confirm you can supply this pair.'
+      )
+      .setColor(0xffed00);
+
+    const dealMsg = await channel.send({
+      content: `<@${seller.discordId}>`,
+      embeds: [dealEmbed],
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`snapshot_process:${source}:${recordId}`)
+            .setLabel('Process Deal')
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId('cancel_deal')
+            .setLabel('Cancel Deal')
+            .setStyle(ButtonStyle.Danger)
+        )
+      ]
+    });
+
+    await base(tableName).update(recordId, {
+      'Fulfillment Status': 'Claim Processing',
+      'Claimed Channel ID': channel.id,
+      'Claimed Message ID': dealMsg.id,
+      'Claimed Seller ID': [seller.recordId],
+      'Claimed Seller Discord ID': seller.discordId,
+      'Claimed Seller Confirmed?': false,
+      'Claimed Seller VAT Type': vatType,
+      'Claimed Seller Payout': payout
+    });
+
+    /*
+      Off the market at once.
+
+      The sweep would catch this within a couple of minutes, and a couple
+      of minutes is long enough for somebody else to press Claim and be
+      refused for it.
+    */
+    await closeSnapshot(tableName, recordId, 'Claimed');
+
+    sellerMap.set(channel.id, {
+      orderRecordId: recordId,
+      sellerRecordId: seller.recordId,
+      sellerDiscordId: seller.discordId,
+      sellerId: seller.sellerId,
+      vatType,
+      payoutChosen: payout,
+      isSnapshotDeal: true,
+      snapshotSource: source,
+      confirmed: false
+    });
+
+    console.log(
+      `Snapshot claimed by ${seller.sellerId} for ${orderId} ` +
+        `(${tableName}) ${payout} ${vatType} -> ${channel.id}`
+    );
+
+  return { ok: true, channelId: channel.id, orderId };
+}
+
 async function sweepSnapshots() {
   for (const tableName of SNAPSHOT_TABLES) {
     try {
@@ -934,6 +1107,66 @@ app.post('/snapshot-deal/create', async (req, res) => {
  * anyone scrolling back can see what happened rather than clicking a button
  * that will only refuse them.
  */
+/*
+ * A snapshot claimed from the selling page rather than from Discord.
+ *
+ * The seller is already signed in over there, so the portal has vouched for
+ * who he is and which VAT scales he may use - this does not second-guess
+ * either. Everything after that is the same path a Discord claim takes,
+ * including the check that the snapshot is still Active, which is what stops
+ * two sellers claiming the same pair from two different places.
+ */
+app.post('/snapshot-deal/claim', async (req, res) => {
+  try {
+    const { recordId, source, vatType, sellerRecordId, sellerId, sellerDiscordId } =
+      req.body || {};
+
+    if (!recordId || !sellerRecordId || !sellerDiscordId) {
+      return res.status(400).json({
+        error: 'recordId, sellerRecordId and sellerDiscordId are required'
+      });
+    }
+
+    const cleanVat =
+      vatType === 'VAT0' ? 'VAT0' :
+      vatType === 'VAT21' ? 'VAT21' :
+      vatType === 'Margin' ? 'Margin' : '';
+
+    if (!cleanVat) {
+      return res.status(400).json({ error: 'vatType must be Margin, VAT21 or VAT0' });
+    }
+
+    // Looked up here rather than taken from the caller, so the page cannot
+    // widen its own permissions by sending a longer list.
+    const sellerLookup = await portalPost('/api/internal/seller-by-discord', {
+      discord_id: sellerDiscordId
+    }).catch(() => null);
+
+    const result = await claimSnapshotFor({
+      tableName: snapshotTableFor(source),
+      source,
+      recordId,
+      vatType: cleanVat,
+      seller: {
+        recordId: sellerRecordId,
+        sellerId,
+        discordId: sellerDiscordId,
+        vatTypes: sellerLookup?.vat_types
+      }
+    });
+
+    if (result.error) {
+      return res.status(409).json({ error: result.error });
+    }
+
+    return res.json(result);
+  } catch (err) {
+    console.error('snapshot-deal/claim failed:', err);
+
+    return res.status(500).json({ error: 'Failed to claim this snapshot' });
+  }
+});
+
 app.post('/snapshot-deal/close', async (req, res) => {
   try {
     const { recordId, source, status } = req.body || {};
@@ -1665,136 +1898,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return interaction.editReply('Your Seller ID is not linked yet. Check your DMs.');
       }
 
-      const record = await base(tableName).find(recordId).catch(() => null);
-
-      if (!record) return interaction.editReply('This deal no longer exists.');
-
-      /*
-        The race is settled on the record, not on the button.
-
-        Two sellers can press Claim inside the same second and Discord will
-        deliver both. Whoever finds the snapshot no longer Active was second,
-        and he is told so plainly rather than walked through a deal he cannot
-        have.
-      */
-      if (String(record.get('Snapshot Status') || '') !== 'Active') {
-        return interaction.editReply('This snapshot is no longer available.');
-      }
-
-      const snapshotPrice = Number(record.get('Snapshot Price') || 0);
-
-      if (!(snapshotPrice > 0)) {
-        return interaction.editReply('This snapshot has no price on it. Please let us know.');
-      }
-
-      // The stored price is VAT-inclusive. A VAT0 seller invoices without
-      // VAT, so his side of the same deal is that figure over 1.21.
-      // The same number a consignor on that VAT type would have been offered,
-      // grid and all. Anything else and the two routes disagree on one deal.
-      const payout = snapshotPayoutFor(snapshotPrice, vatType);
-
-      const orderId = String(
-        record.get('Order ID') || record.get('Member WTB ID') || recordId
-      );
-
-      const productName = String(record.get('Product Name') || '');
-      const sku = String(record.get('SKU') || record.get('SKU (Soft)') || '');
-      const size = String(record.get('Size') || '');
-      const brand = String(record.get('Brand') || '');
-
-      const guild = await client.guilds.fetch(GUILD_ID);
-      const pickedCategory = await pickCategoryWithSpace(guild, snapshotDealCategoryIds());
-
-      if (!pickedCategory) {
-        return interaction.editReply('No deal category with room left. Please let us know.');
-      }
-
-      const channel = await guild.channels.create({
-        name: toChannelSlug(orderId).slice(0, 100),
-        type: ChannelType.GuildText,
-        parent: pickedCategory.id,
-        permissionOverwrites: [
-          { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
-          {
-            id: interaction.user.id,
-            allow: [
-              PermissionsBitField.Flags.ViewChannel,
-              PermissionsBitField.Flags.SendMessages,
-              PermissionsBitField.Flags.AttachFiles
-            ]
-          }
-        ]
-      });
-
-      const dealEmbed = new EmbedBuilder()
-        .setTitle('Snapshot Deal Claimed')
-        .setDescription(
-          `**Order:** ${orderId}\n` +
-            `**Product:** ${productName}\n` +
-            `**SKU:** ${sku}\n` +
-            `**Size:** ${size}\n` +
-            `**Brand:** ${brand}\n` +
-            `**Payout:** ${payout.toFixed(2)}\n` +
-            `**VAT Type:** ${vatType}\n\n` +
-            'Press **Process Deal** to confirm you can supply this pair.'
-        )
-        .setColor(0xffed00);
-
-      const dealMsg = await channel.send({
-        content: `<@${interaction.user.id}>`,
-        embeds: [dealEmbed],
-        components: [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`snapshot_process:${source}:${recordId}`)
-              .setLabel('Process Deal')
-              .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
-              .setCustomId('cancel_deal')
-              .setLabel('Cancel Deal')
-              .setStyle(ButtonStyle.Danger)
-          )
-        ]
-      });
-
-      await base(tableName).update(recordId, {
-        'Fulfillment Status': 'Claim Processing',
-        'Claimed Channel ID': channel.id,
-        'Claimed Message ID': dealMsg.id,
-        'Claimed Seller ID': [sellerLookup.seller_record_id],
-        'Claimed Seller Discord ID': interaction.user.id,
-        'Claimed Seller Confirmed?': false,
-        'Claimed Seller VAT Type': vatType,
-        'Claimed Seller Payout': payout
-      });
-
-      /*
-        Off the market at once.
-
-        The sweep would catch this within a couple of minutes, and a couple
-        of minutes is long enough for somebody else to press Claim and be
-        refused for it.
-      */
-      await closeSnapshot(tableName, recordId, 'Claimed');
-
-      sellerMap.set(channel.id, {
-        orderRecordId: recordId,
-        sellerRecordId: sellerLookup.seller_record_id,
-        sellerDiscordId: interaction.user.id,
-        sellerId: sellerLookup.seller_id,
+      const result = await claimSnapshotFor({
+        tableName,
+        source,
+        recordId,
         vatType,
-        payoutChosen: payout,
-        isSnapshotDeal: true,
-        snapshotSource: source,
-        confirmed: false
+        seller: {
+          recordId: sellerLookup.seller_record_id,
+          sellerId: sellerLookup.seller_id,
+          discordId: interaction.user.id,
+          vatTypes: sellerLookup.vat_types
+        }
       });
 
-      console.log(
-        `Snapshot claimed by ${sellerLookup.seller_id} for ${orderId} ` +
-          `(${tableName}) ${payout} ${vatType} -> ${channel.id}`
-      );
+      if (result.error) return interaction.editReply(result.error);
 
-      return interaction.editReply(`Claimed. Continue in <#${channel.id}>.`);
+      return interaction.editReply(`Claimed. Continue in <#${result.channelId}>.`);
     } catch (err) {
       console.error('snapshot_claim_modal failed:', err);
       return interaction.editReply('Something went wrong claiming this deal.');
