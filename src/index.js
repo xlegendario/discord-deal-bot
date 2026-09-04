@@ -420,6 +420,34 @@ function validateSellerVatEligibility(sellerVatId, sellerCountry, chosenVatType)
   }
   return null;
 }
+/*
+ * The record behind a deal channel, whichever table it lives in.
+ *
+ * Channel names carry the order they belong to, and until snapshots arrived
+ * that was always an ORD- in Unfulfilled Orders Log. A snapshot can hang off
+ * a want-to-buy, whose channel is named MWTB-000449 - and looking that up in
+ * the orders table finds nothing, which surfaced as "Missing claimed Seller
+ * or Order ID" the first time the bot restarted mid-deal.
+ *
+ * Five places did this lookup by hand. One function now, so the next table
+ * that joins the party is added once.
+ */
+async function findDealRecords(orderNumber) {
+  const key = String(orderNumber || '').trim().toUpperCase();
+
+  if (!key) return [];
+
+  if (key.startsWith('MWTB-')) {
+    return await base(MEMBER_WTB_TABLE_NAME)
+      .select({ filterByFormula: `{Member WTB ID} = "${key}"`, maxRecords: 1 })
+      .firstPage();
+  }
+
+  return await base(ORDER_TABLE_NAME)
+    .select({ filterByFormula: `{Order ID} = "${key}"`, maxRecords: 1 })
+    .firstPage();
+}
+
 async function pickCategoryWithSpace(guild, categoryIds) {
   if (!Array.isArray(categoryIds) || categoryIds.length === 0) return null;
   // Make sure cache is warm
@@ -1999,12 +2027,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     try {
       if (!data || !data.orderRecordId || !data.sellerRecordId) {
         const orderNumber = getOrderIdFromChannelName(interaction.channel.name);
-        const recs = await base(ORDER_TABLE_NAME)
-          .select({
-            filterByFormula: `{Order ID} = "${orderNumber}"`,
-            maxRecords: 1
-          })
-          .firstPage();
+        const recs = await findDealRecords(orderNumber);
         if (recs.length) {
           const rec = recs[0];
           data = {
@@ -2119,12 +2142,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         let orderRecordId = data.orderRecordId;
         if (!orderRecordId) {
           const orderNumber = getOrderIdFromChannelName(interaction.channel.name);
-          const recs = await base(ORDER_TABLE_NAME)
-            .select({
-              filterByFormula: `{Order ID} = "${orderNumber}"`,
-              maxRecords: 1
-            })
-            .firstPage();
+          const recs = await findDealRecords(orderNumber);
           if (recs.length) {
             orderRecordId = recs[0].id;
             sellerMap.set(channelId, { ...sellerMap.get(channelId), orderRecordId });
@@ -2180,12 +2198,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       let recordId = data?.orderRecordId;
       if (!recordId) {
         const orderNumber = getOrderIdFromChannelName(channel.name);
-        const records = await base(ORDER_TABLE_NAME)
-          .select({
-            filterByFormula: `{Order ID} = "${orderNumber}"`,
-            maxRecords: 1
-          })
-          .firstPage();
+        const records = await findDealRecords(orderNumber);
         if (records.length > 0) recordId = records[0].id;
       }
       if (!recordId) return await interaction.editReply('❌ Record ID not found.');
@@ -2299,21 +2312,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
     let sellerData = sellerMap.get(channel.id);
     if (!sellerData) {
       const orderNumber = getOrderIdFromChannelName(channel.name);
-      const recs = await base(ORDER_TABLE_NAME)
-        .select({
-          filterByFormula: `{Order ID} = "${orderNumber}"`,
-          maxRecords: 1
-        })
-        .firstPage();
+      const recs = await findDealRecords(orderNumber);
       const rec = recs[0];
       if (rec) {
+        /*
+          A record with a Member WTB ID came from the want-to-buy table, and
+          the only deals that live there with a claimed seller are snapshots.
+          Saying so here keeps the photo gate skipped and sends Make the
+          right link field after a restart has emptied sellerMap.
+        */
+        const isMemberWtbDeal = !!rec.get('Member WTB ID');
+
         sellerData = {
           sellerRecordId: (rec.get('Claimed Seller ID') || [])[0],
           orderRecordId: rec.id,
           sellerDiscordId: rec.get('Claimed Seller Discord ID'),
           dealEmbedId: rec.get('Claimed Message ID'),
           vatType: rec.get('Claimed Seller VAT Type'),
-          isQuickDeal: true
+          isQuickDeal: !isMemberWtbDeal,
+          isSnapshotDeal: isMemberWtbDeal,
+          ...(isMemberWtbDeal ? { snapshotSource: 'member_wtb' } : {})
         };
         sellerMap.set(channel.id, sellerData);
       }
@@ -2494,12 +2512,7 @@ client.on(Events.MessageCreate, async (message) => {
     let data = sellerMap.get(message.channel.id);
     if (!data?.sellerRecordId) {
       const orderNumber = getOrderIdFromChannelName(message.channel.name);
-      const recs = await base(ORDER_TABLE_NAME)
-        .select({
-          filterByFormula: `{Order ID} = "${orderNumber}"`,
-          maxRecords: 1
-        })
-        .firstPage();
+      const recs = await findDealRecords(orderNumber);
       if (recs.length) {
         data = {
           ...(data || {}),
@@ -2583,12 +2596,7 @@ client.on(Events.MessageCreate, async (message) => {
     try {
       const orderNumber = getOrderIdFromChannelName(message.channel.name);
   
-      const recs = await base(ORDER_TABLE_NAME)
-        .select({
-          filterByFormula: `{Order ID} = "${orderNumber}"`,
-          maxRecords: 1
-        })
-        .firstPage();
+      const recs = await findDealRecords(orderNumber);
   
       if (!recs.length) {
         return message.author.send(`❌ No order record found for **${orderNumber}**.`);
