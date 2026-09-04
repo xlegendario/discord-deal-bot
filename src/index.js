@@ -591,7 +591,7 @@ async function postOrRefreshSnapshot({ tableName, recordId, record, payout }) {
 ${sku || '-'}
 ${size || '-'}
 ${brand || '-'}`)
-    .setColor(0x2ecc71)
+    .setColor(0xffed00)
     .addFields(
       { name: 'Payout', value: formatSnapshotPayout(payout), inline: true },
       { name: 'Expires', value: expiryStamp, inline: true }
@@ -635,13 +635,30 @@ ${brand || '-'}`)
 
   if (!msg) msg = await channel.send({ embeds: [embed], components: [row] });
 
-  await base(tableName).update(recordId, {
-    'Snapshot Channel ID': msg.channelId,
-    'Snapshot Message ID': msg.id,
-    'Snapshot Price': payout,
-    'Snapshot Expires At': expiresAt.toISOString(),
-    'Snapshot Status': 'Active'
-  });
+  /*
+    If the record cannot be written, the message must not survive.
+
+    A snapshot whose fields never landed is a button with nothing behind it:
+    the claim reads the record, finds no Active snapshot, and tells a seller
+    it is no longer available - for a deal that was never available in the
+    first place. Seen live on 4 September, when the fields existed on orders
+    but not yet on want-to-buys.
+  */
+  try {
+    await base(tableName).update(recordId, {
+      'Snapshot Channel ID': msg.channelId,
+      'Snapshot Message ID': msg.id,
+      'Snapshot Price': payout,
+      'Snapshot Expires At': expiresAt.toISOString(),
+      'Snapshot Status': 'Active'
+    });
+  } catch (err) {
+    if (!refreshed) await msg.delete().catch(() => null);
+
+    throw new Error(
+      `Could not write the snapshot back to ${tableName} (${recordId}): ${err.message}`
+    );
+  }
 
   console.log(
     `📸 Snapshot ${refreshed ? 'refreshed' : 'posted'} for ${recordId} ` +
