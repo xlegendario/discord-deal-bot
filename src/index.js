@@ -548,9 +548,25 @@ app.get('/portal-status', (_req, res) => {
  * that figure divided by 1.21 to him. Showing only one number means half the
  * channel has to do the sum before they know whether it is worth claiming.
  */
+/*
+ * What a seller is actually paid, in his own VAT scale.
+ *
+ * Rounded down to the EUR 2.50 grid, exactly as getConsignmentSellerOfferPrice
+ * does in the portal. That matters more than it looks: the consignors already
+ * holding this pair were offered a grid number, and if a snapshot paid so much
+ * as a euro more they would ignore their own offer and claim this instead.
+ */
+function snapshotPayoutFor(amount, vatType) {
+  const raw = String(vatType).trim().toUpperCase() === 'VAT0'
+    ? Number(amount) / 1.21
+    : Number(amount);
+
+  return Math.floor(raw / 2.5) * 2.5;
+}
+
 function formatSnapshotPayout(amount) {
-  const incl = Math.round(Number(amount));
-  const vat0 = Math.round(Number(amount) / 1.21);
+  const incl = snapshotPayoutFor(amount, 'Margin');
+  const vat0 = snapshotPayoutFor(amount, 'VAT0');
 
   return `€${incl} (Margin) / €${vat0} (VAT0)`;
 }
@@ -1667,9 +1683,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       // The stored price is VAT-inclusive. A VAT0 seller invoices without
       // VAT, so his side of the same deal is that figure over 1.21.
-      const payout = vatType === 'VAT0'
-        ? Math.round((snapshotPrice / 1.21) * 100) / 100
-        : snapshotPrice;
+      // The same number a consignor on that VAT type would have been offered,
+      // grid and all. Anything else and the two routes disagree on one deal.
+      const payout = snapshotPayoutFor(snapshotPrice, vatType);
 
       const orderId = String(
         record.get('Order ID') || record.get('Member WTB ID') || recordId
