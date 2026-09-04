@@ -804,6 +804,39 @@ async function sweepSnapshots() {
       for (const record of live) {
         const status = String(record.get('Snapshot Status') || '');
 
+        /*
+          Somebody else got there first.
+
+          A consignor confirming, or a store accepting, takes the deal out of
+          Outsource - and from that moment the snapshot is a button that can
+          only refuse whoever presses it. Closing it here rather than waiting
+          for the hour to run out is the difference between a seller seeing a
+          grey card and a seller being told no.
+
+          A claim closes its own snapshot on the spot, so anything still open
+          here was overtaken by another route.
+
+          This runs before the queued branch on purpose. A snapshot held back
+          at ten in the evening is posted at ten the next morning, and eleven
+          hours is long enough for a consignor to have answered in the
+          meantime. Without this it would go up anyway, advertising a pair we
+          had already bought.
+        */
+        const linkedUnit = record.get('Linked Inventory Unit');
+        const hasUnit = Array.isArray(linkedUnit) && linkedUnit.length > 0;
+        const fulfillment = String(record.get('Fulfillment Status') || '');
+
+        if (hasUnit || (fulfillment && fulfillment !== 'Outsource')) {
+          await closeSnapshot(tableName, record.id, hasUnit ? 'Claimed' : 'Cancelled');
+
+          console.log(
+            `📸 Snapshot closed for ${record.id} (${tableName}): order is ` +
+              `${hasUnit ? 'already supplied' : `at ${fulfillment}`}.`
+          );
+
+          continue;
+        }
+
         if (status === 'Queued') {
           if (isSnapshotQuietHour()) continue;
 
@@ -818,33 +851,6 @@ async function sweepSnapshots() {
             payout
           }).catch((err) =>
             console.error(`Could not post queued snapshot ${record.id}:`, err.message)
-          );
-
-          continue;
-        }
-
-        /*
-          Somebody else got there first.
-
-          A consignor confirming, or a store accepting, takes the order out
-          of Outsource - and from that moment the snapshot is a button that
-          can only refuse whoever presses it. Closing it here rather than
-          waiting for the hour to run out is the difference between a seller
-          seeing a grey card and a seller being told no.
-
-          A claim closes its own snapshot on the spot, so anything still
-          Active here was overtaken by another route.
-        */
-        const linkedUnit = record.get('Linked Inventory Unit');
-        const hasUnit = Array.isArray(linkedUnit) && linkedUnit.length > 0;
-        const fulfillment = String(record.get('Fulfillment Status') || '');
-
-        if (hasUnit || (fulfillment && fulfillment !== 'Outsource')) {
-          await closeSnapshot(tableName, record.id, hasUnit ? 'Claimed' : 'Cancelled');
-
-          console.log(
-            `📸 Snapshot closed for ${record.id} (${tableName}): order is ` +
-              `${hasUnit ? 'already supplied' : `at ${fulfillment}`}.`
           );
 
           continue;
