@@ -268,6 +268,32 @@ function parseBrandChannelMap() {
   }
 }
 const BRAND_CHANNEL_MAP = parseBrandChannelMap();
+
+/*
+ * Snapshots get their own category and their own per-brand channels, so they
+ * get their own map. Same shape as QUICK_DEALS_BRAND_CHANNEL_MAP: a JSON
+ * object of brand -> channel id, with a default channel for brands that have
+ * no room of their own.
+ */
+function parseSnapshotBrandChannelMap() {
+  const raw = process.env.SNAPSHOT_DEALS_BRAND_CHANNEL_MAP || '';
+  if (!raw.trim()) return new Map();
+  try {
+    return new Map(Object.entries(JSON.parse(raw)).map(([k, v]) => [safeLower(k), String(v)]));
+  } catch (e) {
+    console.warn('⚠️ SNAPSHOT_DEALS_BRAND_CHANNEL_MAP is not valid JSON:', e.message);
+    return new Map();
+  }
+}
+
+const SNAPSHOT_BRAND_CHANNEL_MAP = parseSnapshotBrandChannelMap();
+
+const SNAPSHOT_DEALS_DEFAULT_CHANNEL_ID = process.env.SNAPSHOT_DEALS_DEFAULT_CHANNEL_ID;
+
+function pickSnapshotChannelId(brand) {
+  const key = normalizeBrand(brand);
+  return SNAPSHOT_BRAND_CHANNEL_MAP.get(key) || SNAPSHOT_DEALS_DEFAULT_CHANNEL_ID;
+}
 function pickQuickDealsChannelId(brand) {
   const key = normalizeBrand(brand);
   return BRAND_CHANNEL_MAP.get(key) || QUICK_DEALS_DEFAULT_CHANNEL_ID;
@@ -305,6 +331,17 @@ const PARTNER_FIELD_QD_WEBHOOK = 'Quick Deals Webhook URL';
 const PARTNER_FIELD_WTB_WEBHOOK_FALLBACK = 'WTB Webhook URL';
 // In Unfulfilled Orders Log we will store: "partnerRecordId:messageId,partnerRecordId2:messageId2,..."
 const ORDER_TABLE_NAME = 'Unfulfilled Orders Log';
+const MEMBER_WTB_TABLE_NAME = 'Member WTBs';
+
+/*
+ * A snapshot can hang off either side of the house: a store order or a
+ * member's want-to-buy. The caller says which, because only it knows.
+ */
+function snapshotTableFor(source) {
+  return String(source || '').toLowerCase() === 'member_wtb'
+    ? MEMBER_WTB_TABLE_NAME
+    : ORDER_TABLE_NAME;
+}
 const ORDER_FIELD_CLAIMED_CHANNEL_ID = 'Claimed Channel ID';
 const PARTNER_FIELD_LAST_QD_POST_AT = 'Last Post At';
 const PARTNER_FIELD_INVITE_URL = 'Invite URL';
@@ -444,6 +481,399 @@ app.get('/portal-status', (_req, res) => {
     node: process.version,
     started_at: new Date().toISOString()
   });
+});
+
+/*
+ * A snapshot deal: one fixed price, one hour, claim or leave it.
+ *
+ * Where a Quick Deal climbs towards a maximum payout over time, this is the
+ * opposite - a buyer has just committed to a price and we want the pair
+ * today, so the number is the number and the clock is short. Short on
+ * purpose: the buyer may find it elsewhere, and a claim twelve hours later
+ * would close a deal nobody is waiting for any more.
+ *
+ * Creates OR refreshes. A counter that moves the price calls this again, and
+ * the existing message is edited rather than a second one sent - five rounds
+ * of haggling must not leave five embeds in a brand channel. The caller does
+ * not have to know which case it is in.
+ */
+/*
+ * Both scales, side by side, the way a Quick Deal embed shows them.
+ *
+ * The price we work with is VAT-inclusive, which is what a Margin seller
+ * gets paid. A VAT0 seller invoices without VAT, so the same deal is worth
+ * that figure divided by 1.21 to him. Showing only one number means half the
+ * channel has to do the sum before they know whether it is worth claiming.
+ */
+function formatSnapshotPayout(amount) {
+  const incl = Math.round(Number(amount));
+  const vat0 = Math.round(Number(amount) / 1.21);
+
+  return `€${incl} (Margin) / €${vat0} (VAT0)`;
+}
+
+/*
+ * Quiet hours.
+ *
+ * A snapshot lives for an hour, so one posted at one in the morning expires
+ * before anyone is awake to see it - and one of the stores does most of its
+ * countering at night. Anything that lands in the quiet window is held as
+ * Queued and posted by the sweep once the window closes, with its hour
+ * starting then rather than at three in the morning.
+ *
+ * Amsterdam time explicitly, not the server's idea of local: this decides
+ * when sellers are awake, and that does not move with a deploy region.
+ */
+const SNAPSHOT_QUIET_FROM = Number(process.env.SNAPSHOT_QUIET_FROM_HOUR || 22);
+const SNAPSHOT_QUIET_UNTIL = Number(process.env.SNAPSHOT_QUIET_UNTIL_HOUR || 10);
+
+function amsterdamHour(date = new Date()) {
+  return Number(
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Amsterdam',
+      hour: '2-digit',
+      hour12: false
+    }).format(date)
+  );
+}
+
+function isSnapshotQuietHour(date = new Date()) {
+  const hour = amsterdamHour(date);
+
+  // The window wraps midnight, so "from 22 until 10" is two ranges.
+  return SNAPSHOT_QUIET_FROM > SNAPSHOT_QUIET_UNTIL
+    ? hour >= SNAPSHOT_QUIET_FROM || hour < SNAPSHOT_QUIET_UNTIL
+    : hour >= SNAPSHOT_QUIET_FROM && hour < SNAPSHOT_QUIET_UNTIL;
+}
+
+const SNAPSHOT_MINUTES = Number(process.env.SNAPSHOT_DEAL_MINUTES || 60);
+
+/*
+ * Post a snapshot, or edit the one that is already up.
+ *
+ * Shared by the endpoint and the sweep, because the sweep posts the ones
+ * that were queued overnight and must produce exactly the same embed. Reads
+ * the product details from the record rather than a payload, so both callers
+ * describe the deal the same way.
+ */
+async function postOrRefreshSnapshot({ tableName, recordId, record, payout }) {
+  const fields = record.fields || {};
+
+  const productName = String(fields['Product Name'] || '');
+  const sku = String(fields['SKU'] || fields['SKU (Soft)'] || '');
+  const size = String(fields['Size'] || '');
+  const brand = String(fields['Brand'] || '');
+  const picture = Array.isArray(fields['Picture']) && fields['Picture'][0]
+    ? fields['Picture'][0].url
+    : '';
+
+  const targetChannelId = pickSnapshotChannelId(brand);
+
+  if (!targetChannelId) throw new Error('Missing SNAPSHOT_DEALS_DEFAULT_CHANNEL_ID');
+  if (!GUILD_ID) throw new Error('Missing GUILD_ID env');
+
+  const guild = await client.guilds.fetch(GUILD_ID);
+  const channel = await guild.channels.fetch(targetChannelId);
+
+  if (!channel || !channel.isTextBased()) {
+    throw new Error(`Snapshot channel not usable (brand="${brand}", channelId=${targetChannelId})`);
+  }
+
+  const expiresAt = new Date(Date.now() + SNAPSHOT_MINUTES * 60 * 1000);
+
+  // Discord renders this as a live countdown, so the embed stays honest
+  // without anyone editing it every minute.
+  const expiryStamp = `<t:${Math.floor(expiresAt.getTime() / 1000)}:R>`;
+
+  const embed = new EmbedBuilder()
+    .setTitle('📸 Snapshot Deal')
+    .setDescription(`**${productName || '-'}**
+${sku || '-'}
+${size || '-'}
+${brand || '-'}`)
+    .setColor(0x2ecc71)
+    .addFields(
+      { name: 'Payout', value: formatSnapshotPayout(payout), inline: true },
+      { name: 'Expires', value: expiryStamp, inline: true }
+    );
+
+  if (picture) embed.setImage(picture);
+
+  const source = tableName === MEMBER_WTB_TABLE_NAME ? 'member_wtb' : 'order';
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`snapshot_claim:${source}:${recordId}`)
+      .setLabel('Claim Deal')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setLabel('See All Deals')
+      .setStyle(ButtonStyle.Link)
+      .setURL(QUICK_DEALS_AIRTABLE_URL)
+  );
+
+  const existingChannelId = String(fields['Snapshot Channel ID'] || '');
+  const existingMessageId = String(fields['Snapshot Message ID'] || '');
+  const existingStatus = String(fields['Snapshot Status'] || '');
+
+  let msg = null;
+  let refreshed = false;
+
+  if (existingMessageId && existingStatus === 'Active') {
+    // Edit where it actually lives, even if the brand map has moved since.
+    const home = existingChannelId === targetChannelId
+      ? channel
+      : await guild.channels.fetch(existingChannelId).catch(() => null);
+
+    const previous = home ? await home.messages.fetch(existingMessageId).catch(() => null) : null;
+
+    if (previous) {
+      msg = await previous.edit({ embeds: [embed], components: [row] });
+      refreshed = true;
+    }
+  }
+
+  if (!msg) msg = await channel.send({ embeds: [embed], components: [row] });
+
+  await base(tableName).update(recordId, {
+    'Snapshot Channel ID': msg.channelId,
+    'Snapshot Message ID': msg.id,
+    'Snapshot Price': payout,
+    'Snapshot Expires At': expiresAt.toISOString(),
+    'Snapshot Status': 'Active'
+  });
+
+  console.log(
+    `📸 Snapshot ${refreshed ? 'refreshed' : 'posted'} for ${recordId} ` +
+      `(${tableName}, brand="${brand || '-'}") € ${payout} -> ${msg.channelId}/${msg.id}`
+  );
+
+  return { refreshed, channelId: msg.channelId, messageId: msg.id, expiresAt };
+}
+
+/*
+ * The snapshot sweep: expire what is over, post what waited for morning.
+ *
+ * Deliberately driven by what the records say rather than by timers held in
+ * memory - this process restarts on every deploy, and a snapshot that
+ * quietly stopped expiring would leave a claimable price standing for a
+ * buyer who has long since gone elsewhere.
+ */
+const SNAPSHOT_TABLES = [ORDER_TABLE_NAME, MEMBER_WTB_TABLE_NAME];
+
+async function closeSnapshot(tableName, recordId, reason) {
+  const record = await base(tableName).find(recordId).catch(() => null);
+
+  if (!record) return false;
+
+  const channelId = String(record.get('Snapshot Channel ID') || '');
+  const messageId = String(record.get('Snapshot Message ID') || '');
+
+  if (channelId && messageId && GUILD_ID) {
+    try {
+      const guild = await client.guilds.fetch(GUILD_ID);
+      const channel = await guild.channels.fetch(channelId);
+      const message = channel && channel.isTextBased()
+        ? await channel.messages.fetch(messageId).catch(() => null)
+        : null;
+
+      if (message) {
+        const closedLine = {
+          Claimed: '✅ Claimed by another seller.',
+          Expired: '⌛ This snapshot has expired.',
+          Cancelled: '🛑 This deal was cancelled.'
+        }[reason];
+
+        const embed = EmbedBuilder.from(message.embeds[0] || {})
+          .setColor(0x808080)
+          .setFooter({ text: closedLine });
+
+        await message.edit({ embeds: [embed], components: [] });
+      }
+    } catch (err) {
+      // A message we cannot reach is no reason to leave the record saying
+      // Active: the status is what the portal and this sweep read.
+      console.error(`Could not edit snapshot message for ${recordId}:`, err.message);
+    }
+  }
+
+  await base(tableName).update(recordId, { 'Snapshot Status': reason });
+
+  return true;
+}
+
+async function sweepSnapshots() {
+  for (const tableName of SNAPSHOT_TABLES) {
+    try {
+      const live = await base(tableName)
+        .select({
+          filterByFormula: `OR({Snapshot Status} = 'Active', {Snapshot Status} = 'Queued')`,
+          fields: [
+            'Snapshot Status',
+            'Snapshot Expires At',
+            'Snapshot Price',
+            'Snapshot Channel ID',
+            'Snapshot Message ID',
+            'Fulfillment Status',
+            'Linked Inventory Unit',
+            'Product Name',
+            'SKU',
+            'Size',
+            'Brand',
+            'Picture'
+          ]
+        })
+        .all();
+
+      for (const record of live) {
+        const status = String(record.get('Snapshot Status') || '');
+
+        if (status === 'Queued') {
+          if (isSnapshotQuietHour()) continue;
+
+          const payout = Number(record.get('Snapshot Price') || 0);
+
+          if (!(payout > 0)) continue;
+
+          await postOrRefreshSnapshot({
+            tableName,
+            recordId: record.id,
+            record,
+            payout
+          }).catch((err) =>
+            console.error(`Could not post queued snapshot ${record.id}:`, err.message)
+          );
+
+          continue;
+        }
+
+        /*
+          Somebody else got there first.
+
+          A consignor confirming, or a store accepting, takes the order out
+          of Outsource - and from that moment the snapshot is a button that
+          can only refuse whoever presses it. Closing it here rather than
+          waiting for the hour to run out is the difference between a seller
+          seeing a grey card and a seller being told no.
+
+          A claim closes its own snapshot on the spot, so anything still
+          Active here was overtaken by another route.
+        */
+        const linkedUnit = record.get('Linked Inventory Unit');
+        const hasUnit = Array.isArray(linkedUnit) && linkedUnit.length > 0;
+        const fulfillment = String(record.get('Fulfillment Status') || '');
+
+        if (hasUnit || (fulfillment && fulfillment !== 'Outsource')) {
+          await closeSnapshot(tableName, record.id, hasUnit ? 'Claimed' : 'Cancelled');
+
+          console.log(
+            `📸 Snapshot closed for ${record.id} (${tableName}): order is ` +
+              `${hasUnit ? 'already supplied' : `at ${fulfillment}`}.`
+          );
+
+          continue;
+        }
+
+        const expiresAt = Date.parse(record.get('Snapshot Expires At'));
+
+        if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+          await closeSnapshot(tableName, record.id, 'Expired');
+          console.log(`📸 Snapshot expired for ${record.id} (${tableName})`);
+        }
+      }
+    } catch (err) {
+      console.error(`Snapshot sweep failed on ${tableName}:`, err.message);
+    }
+  }
+}
+
+// Every two minutes: often enough that an hour-long deal closes on time, and
+// light enough that it is two Airtable reads.
+setInterval(() => {
+  sweepSnapshots().catch((err) => console.error('Snapshot sweep crashed:', err.message));
+}, 2 * 60 * 1000);
+
+app.post('/snapshot-deal/create', async (req, res) => {
+  try {
+    const { recordId, source, price } = req.body || {};
+
+    if (!recordId) return res.status(400).send('Missing recordId');
+
+    const payout = Number(price);
+
+    if (!Number.isFinite(payout) || payout <= 0) {
+      return res.status(400).send('Missing or invalid price');
+    }
+
+    const tableName = snapshotTableFor(source);
+    const record = await base(tableName).find(recordId).catch(() => null);
+
+    if (!record) return res.status(404).send(`Record ${recordId} not found in ${tableName}`);
+
+    const alreadyPosted = String(record.get('Snapshot Message ID') || '');
+
+    /*
+      Nothing goes out in the quiet window unless it is already up. A price
+      that moves at three in the morning still updates the record, so the
+      sweep posts the right number in the morning - it just does not wake a
+      channel nobody is reading.
+    */
+    if (!alreadyPosted && isSnapshotQuietHour()) {
+      await base(tableName).update(recordId, {
+        'Snapshot Price': payout,
+        'Snapshot Status': 'Queued'
+      });
+
+      console.log(`📸 Snapshot queued for ${recordId} (${tableName}) € ${payout} - quiet hours.`);
+
+      return res.json({ ok: true, queued: true });
+    }
+
+    const result = await postOrRefreshSnapshot({ tableName, recordId, record, payout });
+
+    res.json({
+      ok: true,
+      refreshed: result.refreshed,
+      channel_id: result.channelId,
+      message_id: result.messageId,
+      expires_at: result.expiresAt.toISOString()
+    });
+  } catch (err) {
+    console.error('❌ snapshot-deal/create failed:', err);
+    res.status(500).send(err.message);
+  }
+});
+
+/*
+ * Take a snapshot off the table: claimed, expired or cancelled.
+ *
+ * The embed stays where it is - a channel full of vanished messages tells a
+ * seller nothing - but the button goes and the reason is written on it, so
+ * anyone scrolling back can see what happened rather than clicking a button
+ * that will only refuse them.
+ */
+app.post('/snapshot-deal/close', async (req, res) => {
+  try {
+    const { recordId, source, status } = req.body || {};
+
+    if (!recordId) return res.status(400).send('Missing recordId');
+
+    const reason = ['Claimed', 'Expired', 'Cancelled'].includes(status) ? status : 'Expired';
+    const tableName = snapshotTableFor(source);
+
+    // Same function the sweep uses, so a snapshot closed by hand and one
+    // closed by the clock leave the channel looking identical.
+    const closed = await closeSnapshot(tableName, recordId, reason);
+
+    if (!closed) return res.status(404).send(`Record ${recordId} not found in ${tableName}`);
+
+    console.log(`📸 Snapshot ${reason.toLowerCase()} for ${recordId} (${tableName})`);
+
+    res.json({ ok: true, status: reason });
+  } catch (err) {
+    console.error('❌ snapshot-deal/close failed:', err);
+    res.status(500).send(err.message);
+  }
 });
 
 app.post('/quick-deal/create', async (req, res) => {
@@ -989,6 +1419,306 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 
   /* ---------- QUICK DEAL: Claim button → modal ---------- */
+  /* ---------- SNAPSHOT PROCESS DEAL → hand it to us ---------- */
+  if (interaction.isButton() && interaction.customId.startsWith('snapshot_process:')) {
+    const [, source, recordId] = interaction.customId.split(':');
+    const tableName = snapshotTableFor(source);
+
+    try {
+      await interaction.deferUpdate();
+    } catch (err) {
+      if (err.code === 10062) {
+        await interaction.channel.send({
+          content: 'That button expired. Please let us know and we will re-open the deal.'
+        });
+        return;
+      }
+
+      throw err;
+    }
+
+    try {
+      const data = sellerMap.get(interaction.channel.id);
+
+      /*
+        Only the seller who claimed it may process it.
+
+        The channel is private to him, but a stray permission or a mistaken
+        invite should not be enough to hand somebody else's deal away.
+      */
+      if (data?.sellerDiscordId && data.sellerDiscordId !== interaction.user.id) {
+        await interaction.followUp({
+          content: 'Only the seller who claimed this deal can process it.',
+          flags: 64
+        }).catch(() => null);
+
+        return;
+      }
+
+      await base(tableName)
+        .update(recordId, { 'Claimed Seller Confirmed?': true })
+        .catch((err) =>
+          console.error(`Could not mark ${recordId} as confirmed by the seller:`, err.message)
+        );
+
+      if (data) sellerMap.set(interaction.channel.id, { ...data, confirmed: true });
+
+      // The seller has done his part, so his buttons go. Cancel stays with
+      // us on the message below, where it belongs.
+      await interaction.message.edit({
+        embeds: interaction.message.embeds,
+        components: []
+      }).catch((err) => console.error('Could not clear the snapshot deal buttons:', err.message));
+
+      /*
+        No photo wall here, unlike a Quick Deal.
+
+        A snapshot is priced and agreed before it is claimed, and its whole
+        point is speed - the buyer may walk if this takes hours. So the seller
+        says he can supply it and the deal is ours to confirm.
+      */
+      await interaction.channel.send({
+        content: 'The seller confirmed he can supply this pair. Ready for us to confirm.',
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId('confirm_deal')
+              .setLabel('Confirm Deal')
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId('cancel_deal')
+              .setLabel('Cancel Deal')
+              .setStyle(ButtonStyle.Danger)
+          )
+        ]
+      });
+
+      console.log(`Snapshot processed by the seller for ${recordId} (${tableName}).`);
+    } catch (err) {
+      console.error('snapshot_process failed:', err);
+
+      await interaction.channel
+        .send({ content: 'Something went wrong. Please let us know.' })
+        .catch(() => null);
+    }
+
+    return;
+  }
+
+  /* ---------- SNAPSHOT CLAIM → VAT modal ---------- */
+  if (interaction.isButton() && interaction.customId.startsWith('snapshot_claim:')) {
+    const [, source, recordId] = interaction.customId.split(':');
+
+    // Same courtesy as a Quick Deal: someone whose Seller ID is not linked
+    // yet is told how to fix it instead of meeting a silent failure.
+    const sellerCheck = await lookupSellerCached(interaction.user.id);
+
+    if (sellerCheck && !sellerCheck.found) {
+      await interaction.reply({
+        embeds: [NOT_LINKED_EMBED],
+        components: notLinkedComponents(),
+        flags: 64
+      }).catch(() => null);
+
+      await dmNotLinked(interaction.user);
+      return;
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`snapshot_claim_modal:${source}:${recordId}`)
+      .setTitle('Claim Snapshot Deal');
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('vat_type')
+          .setLabel('VAT Type (Margin / VAT21 / VAT0)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setPlaceholder('Margin, VAT21 or VAT0')
+      )
+    );
+
+    try {
+      await interaction.showModal(modal);
+    } catch (err) {
+      if (err.code === 10062) {
+        await interaction.channel.send({
+          content: 'This snapshot button expired. Please use a fresh one if available.'
+        });
+        return;
+      }
+
+      console.error('snapshot_claim showModal failed:', err);
+    }
+
+    return;
+  }
+
+  /* ---------- SNAPSHOT CLAIM MODAL → deal channel ---------- */
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('snapshot_claim_modal:')) {
+    await interaction.deferReply({ flags: 64 });
+
+    const [, source, recordId] = interaction.customId.split(':');
+    const tableName = snapshotTableFor(source);
+
+    try {
+      const rawVat = String(interaction.fields.getTextInputValue('vat_type') || '')
+        .trim()
+        .toUpperCase();
+
+      const vatType =
+        rawVat === 'VAT0' ? 'VAT0' :
+        rawVat === 'VAT21' ? 'VAT21' :
+        rawVat === 'MARGIN' ? 'Margin' : '';
+
+      if (!vatType) return interaction.editReply('Enter Margin, VAT21 or VAT0.');
+
+      const sellerLookup = await portalPost('/api/internal/seller-by-discord', {
+        discord_id: interaction.user.id
+      }).catch(() => null);
+
+      if (!sellerLookup || !sellerLookup.seller_record_id) {
+        await dmNotLinked(interaction.user);
+        return interaction.editReply('Your Seller ID is not linked yet. Check your DMs.');
+      }
+
+      const record = await base(tableName).find(recordId).catch(() => null);
+
+      if (!record) return interaction.editReply('This deal no longer exists.');
+
+      /*
+        The race is settled on the record, not on the button.
+
+        Two sellers can press Claim inside the same second and Discord will
+        deliver both. Whoever finds the snapshot no longer Active was second,
+        and he is told so plainly rather than walked through a deal he cannot
+        have.
+      */
+      if (String(record.get('Snapshot Status') || '') !== 'Active') {
+        return interaction.editReply('This snapshot is no longer available.');
+      }
+
+      const snapshotPrice = Number(record.get('Snapshot Price') || 0);
+
+      if (!(snapshotPrice > 0)) {
+        return interaction.editReply('This snapshot has no price on it. Please let us know.');
+      }
+
+      // The stored price is VAT-inclusive. A VAT0 seller invoices without
+      // VAT, so his side of the same deal is that figure over 1.21.
+      const payout = vatType === 'VAT0'
+        ? Math.round((snapshotPrice / 1.21) * 100) / 100
+        : snapshotPrice;
+
+      const orderId = String(
+        record.get('Order ID') || record.get('Member WTB ID') || recordId
+      );
+
+      const productName = String(record.get('Product Name') || '');
+      const sku = String(record.get('SKU') || record.get('SKU (Soft)') || '');
+      const size = String(record.get('Size') || '');
+      const brand = String(record.get('Brand') || '');
+
+      const guild = await client.guilds.fetch(GUILD_ID);
+      const pickedCategory = await pickCategoryWithSpace(guild, DEAL_CATEGORY_IDS);
+
+      if (!pickedCategory) {
+        return interaction.editReply('No deal category with room left. Please let us know.');
+      }
+
+      const channel = await guild.channels.create({
+        name: toChannelSlug(orderId).slice(0, 100),
+        type: ChannelType.GuildText,
+        parent: pickedCategory.id,
+        permissionOverwrites: [
+          { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
+          {
+            id: interaction.user.id,
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.SendMessages,
+              PermissionsBitField.Flags.AttachFiles
+            ]
+          }
+        ]
+      });
+
+      const dealEmbed = new EmbedBuilder()
+        .setTitle('Snapshot Deal Claimed')
+        .setDescription(
+          `**Order:** ${orderId}\n` +
+            `**Product:** ${productName}\n` +
+            `**SKU:** ${sku}\n` +
+            `**Size:** ${size}\n` +
+            `**Brand:** ${brand}\n` +
+            `**Payout:** ${payout.toFixed(2)}\n` +
+            `**VAT Type:** ${vatType}\n\n` +
+            'Press **Process Deal** to confirm you can supply this pair.'
+        )
+        .setColor(0x2ecc71);
+
+      const dealMsg = await channel.send({
+        content: `<@${interaction.user.id}>`,
+        embeds: [dealEmbed],
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`snapshot_process:${source}:${recordId}`)
+              .setLabel('Process Deal')
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId('cancel_deal')
+              .setLabel('Cancel Deal')
+              .setStyle(ButtonStyle.Danger)
+          )
+        ]
+      });
+
+      await base(tableName).update(recordId, {
+        'Fulfillment Status': 'Claim Processing',
+        'Claimed Channel ID': channel.id,
+        'Claimed Message ID': dealMsg.id,
+        'Claimed Seller ID': [sellerLookup.seller_record_id],
+        'Claimed Seller Discord ID': interaction.user.id,
+        'Claimed Seller Confirmed?': false,
+        'Claimed Seller VAT Type': vatType,
+        'Claimed Seller Payout': payout
+      });
+
+      /*
+        Off the market at once.
+
+        The sweep would catch this within a couple of minutes, and a couple
+        of minutes is long enough for somebody else to press Claim and be
+        refused for it.
+      */
+      await closeSnapshot(tableName, recordId, 'Claimed');
+
+      sellerMap.set(channel.id, {
+        orderRecordId: recordId,
+        sellerRecordId: sellerLookup.seller_record_id,
+        sellerDiscordId: interaction.user.id,
+        sellerId: sellerLookup.seller_id,
+        vatType,
+        payoutChosen: payout,
+        isSnapshotDeal: true,
+        snapshotSource: source,
+        confirmed: false
+      });
+
+      console.log(
+        `Snapshot claimed by ${sellerLookup.seller_id} for ${orderId} ` +
+          `(${tableName}) ${payout} ${vatType} -> ${channel.id}`
+      );
+
+      return interaction.editReply(`Claimed. Continue in <#${channel.id}>.`);
+    } catch (err) {
+      console.error('snapshot_claim_modal failed:', err);
+      return interaction.editReply('Something went wrong claiming this deal.');
+    }
+  }
+
   if (interaction.isButton() && interaction.customId.startsWith('quick_claim_')) {
     const recordId = interaction.customId.replace('quick_claim_', '').trim();
 
@@ -1628,8 +2358,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            source: sellerData.isQuickDeal ? 'Quick Deal' : 'Claim Deal',
-            orderRecordId: sellerData.orderRecordId,
+            source: sellerData.isSnapshotDeal
+              ? 'Snapshot Deal'
+              : sellerData.isQuickDeal ? 'Quick Deal' : 'Claim Deal',
+
+            /*
+              Which record the unit hangs off.
+
+              A snapshot can come from a want-to-buy, and Inventory Units has
+              a separate link for those. Make maps each of these to its own
+              field, so exactly one is filled and the other stays empty -
+              rather than Make having to work out which side it is on.
+            */
+            orderRecordId: sellerData.isSnapshotDeal && sellerData.snapshotSource === 'member_wtb'
+              ? ''
+              : sellerData.orderRecordId,
+
+            memberWtbRecordId: sellerData.isSnapshotDeal && sellerData.snapshotSource === 'member_wtb'
+              ? sellerData.orderRecordId
+              : '',
             sellerRecordId: sellerData.sellerRecordId,
             orderNumber,
             productName,
