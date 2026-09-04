@@ -288,6 +288,21 @@ function parseSnapshotBrandChannelMap() {
 
 const SNAPSHOT_BRAND_CHANNEL_MAP = parseSnapshotBrandChannelMap();
 
+/*
+ * Snapshot deal channels get their own categories.
+ *
+ * Falls back to the Quick Deal categories when none are set, so a missing
+ * env var means channels land somewhere sensible rather than nowhere.
+ */
+const SNAPSHOT_DEAL_CATEGORY_IDS = (process.env.SNAPSHOT_DEAL_CATEGORY_IDS || '')
+  .split(',')
+  .map((id) => id.trim())
+  .filter(Boolean);
+
+function snapshotDealCategoryIds() {
+  return SNAPSHOT_DEAL_CATEGORY_IDS.length ? SNAPSHOT_DEAL_CATEGORY_IDS : DEAL_CATEGORY_IDS;
+}
+
 const SNAPSHOT_DEALS_DEFAULT_CHANNEL_ID = process.env.SNAPSHOT_DEALS_DEFAULT_CHANNEL_ID;
 
 function pickSnapshotChannelId(brand) {
@@ -1638,7 +1653,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const brand = String(record.get('Brand') || '');
 
       const guild = await client.guilds.fetch(GUILD_ID);
-      const pickedCategory = await pickCategoryWithSpace(guild, DEAL_CATEGORY_IDS);
+      const pickedCategory = await pickCategoryWithSpace(guild, snapshotDealCategoryIds());
 
       if (!pickedCategory) {
         return interaction.editReply('No deal category with room left. Please let us know.');
