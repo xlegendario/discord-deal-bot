@@ -1673,7 +1673,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             `**VAT Type:** ${vatType}\n\n` +
             'Press **Process Deal** to confirm you can supply this pair.'
         )
-        .setColor(0x2ecc71);
+        .setColor(0xffed00);
 
       const dealMsg = await channel.send({
         content: `<@${interaction.user.id}>`,
@@ -2305,10 +2305,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     if (sellerData?.dealConfirmed) return interaction.editReply({ content: '⚠️ This deal has already been confirmed.' });
     if (!sellerData || !sellerData.orderRecordId || !sellerData.sellerRecordId) return interaction.editReply({ content: '❌ Missing claimed Seller or Order ID.' });
-    const imageMsg = messages.find(
-      (m) => m.attachments.size > 0 && [...m.attachments.values()].some((att) => att.contentType?.startsWith('image/'))
-    );
-    if (!imageMsg) return interaction.editReply({ content: '❌ No image found in recent messages.' });
+    /*
+      A Quick Deal is confirmed on the strength of the seller's photos, so
+      one has to be there. A Snapshot has no photo wall - it is a fixed price
+      the seller either takes or does not, and its whole point is that this
+      happens in minutes. The image was only ever a gate here; nothing below
+      reads it.
+    */
+    if (!sellerData?.isSnapshotDeal) {
+      const imageMsg = messages.find(
+        (m) => m.attachments.size > 0 && [...m.attachments.values()].some((att) => att.contentType?.startsWith('image/'))
+      );
+
+      if (!imageMsg) return interaction.editReply({ content: '❌ No image found in recent messages.' });
+    }
     let embed;
     const storedId = sellerMap.get(channel.id)?.dealEmbedId;
     if (storedId) {
