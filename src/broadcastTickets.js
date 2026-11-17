@@ -40,6 +40,9 @@ const REQUIRED_PERMS = [
   ['ReadMessageHistory', PermissionsBitField.Flags.ReadMessageHistory]
 ];
 
+// Readable via /portal-status, so a missing command can be diagnosed without the Render logs.
+const registrationStatus = { state: 'pending', error: null, at: null };
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function contentRef({ title, text, imageUrl }) {
@@ -127,6 +130,7 @@ function registerBroadcastTickets({ client, env, adminRoleIds, getCategoryIds })
   client.once(Events.ClientReady, async () => {
     if (!GUILD_ID) {
       console.warn('⚠️ /broadcast-tickets not registered: GUILD_ID missing.');
+      Object.assign(registrationStatus, { state: 'skipped', error: 'GUILD_ID missing', at: new Date().toISOString() });
       return;
     }
     try {
@@ -150,8 +154,10 @@ function registerBroadcastTickets({ client, env, adminRoleIds, getCategoryIds })
         ]
       });
       console.log(`✅ /${COMMAND_NAME} registered.`);
+      Object.assign(registrationStatus, { state: 'registered', error: null, at: new Date().toISOString() });
     } catch (err) {
       console.error(`❌ Could not register /${COMMAND_NAME}:`, err?.message || err);
+      Object.assign(registrationStatus, { state: 'failed', error: `${err?.code || ''} ${err?.message || err}`.trim(), at: new Date().toISOString() });
     }
   });
 
@@ -373,4 +379,4 @@ function registerBroadcastTickets({ client, env, adminRoleIds, getCategoryIds })
   });
 }
 
-module.exports = { registerBroadcastTickets, isOpenDealTicket, contentRef, buildEmbed, listChannelNames };
+module.exports = { registerBroadcastTickets, registrationStatus, isOpenDealTicket, contentRef, buildEmbed, listChannelNames };

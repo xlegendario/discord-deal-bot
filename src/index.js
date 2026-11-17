@@ -5,7 +5,8 @@ const { registerAffiliateInvites } = require("./affiliateInvites");
 const { registerLeaderboards } = require("./leaderboards");
 const { registerMembersBackfill } = require("./backfillMembers");
 const { registerHubMessages } = require("./hubMessages");
-const { registerBroadcastTickets } = require("./broadcastTickets");
+const { registerBroadcastTickets, registrationStatus: broadcastCommandStatus } = require("./broadcastTickets");
+const PROCESS_STARTED_AT = new Date().toISOString();
 const {
   Client,
   GatewayIntentBits,
@@ -525,11 +526,12 @@ client.once('ready', async () => {
 // nieuwe code, en is de portal-koppeling geconfigureerd?
 app.get('/portal-status', (_req, res) => {
   res.json({
-    build: 'seller-lookup-v1',
+    build: 'broadcast-tickets-v1',
     portal_base_url: KC_PORTAL_BASE_URL,
     portal_secret_set: !!KC_PORTAL_SECRET,
     node: process.version,
-    started_at: new Date().toISOString()
+    started_at: PROCESS_STARTED_AT,
+    broadcast_command: broadcastCommandStatus
   });
 });
 
