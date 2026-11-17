@@ -5,6 +5,7 @@ const { registerAffiliateInvites } = require("./affiliateInvites");
 const { registerLeaderboards } = require("./leaderboards");
 const { registerMembersBackfill } = require("./backfillMembers");
 const { registerHubMessages } = require("./hubMessages");
+const { registerBroadcastTickets } = require("./broadcastTickets");
 const {
   Client,
   GatewayIntentBits,
@@ -326,6 +327,12 @@ const PARTNER_QUICK_DEALS_CHANNEL_IDS = (process.env.PARTNER_QUICK_DEALS_CHANNEL
   .filter(Boolean);
 // Roles / permissions
 const ADMIN_ROLE_IDS = ['942779423449579530', '1060615571118510191'];
+registerBroadcastTickets({
+  client,
+  env: process.env,
+  adminRoleIds: ADMIN_ROLE_IDS,
+  getCategoryIds: () => [...new Set([...DEAL_CATEGORY_IDS, ...snapshotDealCategoryIds()])]
+});
 const TRUSTED_SELLERS_ROLE_ID = process.env.TRUSTED_SELLERS_ROLE_ID;
 // Webhook to Make (for Inventory Unit creation etc.)
 const MAKE_QUICK_DEAL_WEBHOOK_URL = process.env.MAKE_QUICK_DEAL_WEBHOOK_URL || '';
